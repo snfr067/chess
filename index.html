@@ -8,11 +8,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="台灣暗棋">
   <title>台灣暗棋小遊戲</title>
-  <meta name="app-version" content="mobile-r7-20260617-ai-delay-animation">
+  <meta name="app-version" content="mobile-r8-20260617-visible-action-ux">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./apple-touch-icon.svg">
-  <link rel="stylesheet" href="./style.css?v=mobile-r7-20260617-ai-delay-animation">
+  <link rel="stylesheet" href="./style.css?v=mobile-r8-20260617-visible-action-ux">
 </head>
 <body>
   <div class="app-shell">
@@ -27,20 +27,23 @@
     <main>
       <section id="homeView" class="view home-view active">
         <div class="hero-card">
-          <div class="hero-kicker">4 × 8 半棋</div>
-          <h1>翻一顆，定紅黑。</h1>
-          <p>
-            棋盤採木紋底、圓棋子、紅黑對陣設計；AI 會依目前難度搜尋局面，
-            不是單純亂走。
-          </p>
-
-          <div class="home-actions">
-            <button id="startGameBtn" class="primary-btn">遊戲開始</button>
-            <button id="openSettingsBtn" class="secondary-btn">遊戲設定</button>
+          <div class="hero-copy">
+            <div class="hero-kicker">4 × 8 半棋</div>
+            <h1>翻一顆，定紅黑。</h1>
+            <p>手機橫向優先設計；棋盤、墳墓與上一步動作會用動畫和標示呈現，不靠長篇文字猜局面。</p>
+            <div class="home-actions">
+              <button id="startGameBtn" class="primary-btn">遊戲開始</button>
+              <button id="openSettingsBtn" class="secondary-btn">遊戲設定</button>
+            </div>
+            <div class="offline-note">初次載入後會自動快取。從主畫面開啟時，無網路仍可進入遊戲。</div>
           </div>
-
-          <div class="offline-note" id="offlineNote">
-            初次載入後會自動快取。從主畫面開啟時，無網路仍可進入遊戲。
+          <div class="home-board-preview" aria-hidden="true">
+            <span class="mini-piece red">帥</span>
+            <span class="mini-piece hidden">暗</span>
+            <span class="mini-piece black">將</span>
+            <span class="mini-piece red">炮</span>
+            <span class="mini-piece black">卒</span>
+            <span class="mini-piece hidden">暗</span>
           </div>
         </div>
       </section>
@@ -60,35 +63,29 @@
             <select id="difficultySelect" class="select-input">
               <option value="easy">入門：反應快，搜尋較淺</option>
               <option value="normal">一般：平衡速度與強度</option>
-              <option value="hard">困難：搜尋較深，不偷看暗棋</option>
-              <option value="master">強敵：較深搜尋，候選步更多</option>
+              <option value="hard">困難：搜尋較深，風險估算更重</option>
+              <option value="master">強敵：候選步更多，估算更細</option>
             </select>
             <p id="difficultyHelp" class="setting-help"></p>
           </div>
 
           <div class="setting-toggle-block">
             <label class="checkbox-row" for="comboRuleCheckbox">
-              <input id="comboRuleCheckbox" type="checkbox" checked>
+              <input id="comboRuleCheckbox" type="checkbox">
               <span>
                 <strong>連吃規則</strong>
-                <small>啟用後，成功食用可用同一顆棋繼續食用，也可嘗試食用暗棋。</small>
+                <small>成功食用後，同一顆棋可繼續食用；可嘗試食用暗棋，失敗則翻開目標並結束回合。</small>
               </span>
             </label>
           </div>
 
-          <div class="setting-block delay-setting-block">
+          <div class="delay-setting-block">
             <div class="delay-label-row">
               <label class="setting-label" for="aiDelayRange">AI 每步延遲</label>
-              <output id="aiDelayValue" class="delay-value" for="aiDelayRange">0.8 秒</output>
+              <span id="aiDelayValue" class="delay-value">0.8 秒</span>
             </div>
             <input id="aiDelayRange" class="range-input" type="range" min="0.2" max="2.5" step="0.1" value="0.8">
-            <p class="setting-help">AI 每一步會先標示來源與目標，再依秒數延遲後執行；連吃時每一口都會分步顯示。</p>
-          </div>
-
-          <div class="setting-preview">
-            <div class="mini-piece red">帥</div>
-            <div class="mini-piece hidden">暗</div>
-            <div class="mini-piece black">將</div>
+            <p class="setting-help">延遲會套用在 AI 標示、翻暗棋、食用與連吃的每個可視步驟。</p>
           </div>
         </div>
       </section>
@@ -96,60 +93,82 @@
       <section id="gameView" class="view game-view">
         <div class="game-layout">
           <div class="game-panel">
-            <div class="game-topbar">
-              <button id="gameBackBtn" class="ghost-btn">首頁</button>
-              <button id="endTurnBtn" class="primary-btn compact hidden">結束回合</button>
-              <button id="newGameBtn" class="secondary-btn compact">重開</button>
-            </div>
-
-            <div class="score-strip">
-              <div class="side-card human">
-                <span>您</span>
-                <strong id="humanColorLabel">未定</strong>
-              </div>
-              <div class="turn-orb" id="turnOrb">先翻</div>
-              <div class="side-card ai">
-                <span>AI</span>
-                <strong id="aiColorLabel">未定</strong>
+            <div class="board-zone">
+              <div class="board-frame">
+                <div id="board" class="board" aria-label="暗棋棋盤"></div>
               </div>
             </div>
 
-            <div class="status-box">
-              <div id="statusText" class="status-main">請先翻一顆棋。</div>
-              <div id="detailText" class="status-detail">第一次翻出的顏色歸您，另一色歸 AI。</div>
-            </div>
+            <aside class="side-rail" aria-label="遊戲資訊">
+              <div class="game-topbar">
+                <button id="gameBackBtn" class="ghost-btn">首頁</button>
+                <button id="newGameBtn" class="secondary-btn compact">重開</button>
+                <button id="endTurnBtn" class="primary-btn compact hidden">結束回合</button>
+              </div>
 
-            <div class="board-wrap"><div id="board" class="board" aria-label="暗棋棋盤"></div></div>
-
-            <section class="graveyard" aria-label="被吃掉的棋子">
-              <div class="graveyard-head">
-                <div>
-                  <div class="graveyard-kicker">Captured</div>
-                  <strong>墳墓</strong>
+              <div class="score-strip">
+                <div class="side-card human">
+                  <span>您</span>
+                  <strong id="humanColorLabel">未定</strong>
                 </div>
-                <span id="capturedCount" class="captured-count">0</span>
-              </div>
-
-              <div class="graveyard-rows">
-                <div class="grave-row">
-                  <span class="grave-label red-label">紅方被吃</span>
-                  <div id="redGrave" class="grave-list empty-note">尚無</div>
-                </div>
-                <div class="grave-row">
-                  <span class="grave-label black-label">黑方被吃</span>
-                  <div id="blackGrave" class="grave-list empty-note">尚無</div>
+                <div class="turn-orb" id="turnOrb">先翻</div>
+                <div class="side-card ai">
+                  <span>AI</span>
+                  <strong id="aiColorLabel">未定</strong>
                 </div>
               </div>
-            </section>
 
-            <div class="rule-hint">
-              炮／包跳吃需同列或同行，且中間剛好隔一顆棋；兵／卒可吃帥／將，帥／將不可吃兵／卒。
-            </div>
+              <section id="actionVisual" class="action-visual idle" aria-label="上一步動作">
+                <div class="action-head">
+                  <span id="actionActor" class="actor-pill">等待</span>
+                  <span id="actionKind" class="kind-pill">上一步</span>
+                </div>
+                <div class="action-flow">
+                  <span id="actionFrom" class="pos-chip muted">起點</span>
+                  <span class="arrow-chip">→</span>
+                  <span id="actionTo" class="pos-chip muted">目標</span>
+                </div>
+                <div class="action-pieces">
+                  <span id="actionReveal" class="event-chip hidden">翻</span>
+                  <span id="actionCaptured" class="event-chip hidden">墓</span>
+                </div>
+              </section>
+
+              <div class="status-box">
+                <div id="statusText" class="status-main">請先翻一顆棋。</div>
+                <div id="detailText" class="status-detail">第一次翻出的顏色歸您，另一色歸 AI。</div>
+              </div>
+
+              <section class="graveyard" aria-label="被吃掉的棋子">
+                <div class="graveyard-head">
+                  <div>
+                    <div class="graveyard-kicker">Captured</div>
+                    <strong>墳墓</strong>
+                  </div>
+                  <span id="capturedCount" class="captured-count">0</span>
+                </div>
+
+                <div class="graveyard-rows">
+                  <div class="grave-row">
+                    <span class="grave-label red-label">紅方被吃</span>
+                    <div id="redGrave" class="grave-list empty-note">尚無</div>
+                  </div>
+                  <div class="grave-row">
+                    <span class="grave-label black-label">黑方被吃</span>
+                    <div id="blackGrave" class="grave-list empty-note">尚無</div>
+                  </div>
+                </div>
+              </section>
+
+              <div class="rule-hint">炮／包只能跳吃；連吃只能用同一顆棋繼續食用，不能改移動到空格。</div>
+            </aside>
           </div>
         </div>
       </section>
     </main>
   </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-card">
@@ -162,7 +181,7 @@
     </div>
   </div>
 
-  <script src="./app.js?v=mobile-r7-20260617-ai-delay-animation"></script>
-  <div id="versionBadge" class="version-badge">版本：mobile-r7-20260617-ai-delay-animation</div>
+  <script src="./app.js?v=mobile-r8-20260617-visible-action-ux"></script>
+  <div id="versionBadge" class="version-badge">版本：mobile-r8-20260617-visible-action-ux</div>
 </body>
 </html>

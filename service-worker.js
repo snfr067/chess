@@ -1,38 +1,28 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-r7-20260617-ai-delay-animation";
-
+const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-r8-20260617-visible-action-ux";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=mobile-r7-20260617-ai-delay-animation",
-  "./app.js?v=mobile-r7-20260617-ai-delay-animation",
+  "./style.css?v=mobile-r8-20260617-visible-action-ux",
+  "./app.js?v=mobile-r8-20260617-visible-action-ux",
   "./manifest.webmanifest",
   "./icon.svg",
-  "./apple-touch-icon.svg",
+  "./apple-touch-icon.svg"
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(
-        keys
-          .filter((key) => key.startsWith("taiwan-dark-chess-pwa-") && key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
-      ))
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith("taiwan-dark-chess-pwa-") && key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
-
   const request = event.request;
   const accept = request.headers.get("accept") || "";
   const isNavigation = request.mode === "navigate" || accept.includes("text/html");
