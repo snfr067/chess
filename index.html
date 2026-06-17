@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#6b3f24">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="台灣暗棋">
+  <title>台灣暗棋小遊戲</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./apple-touch-icon.svg">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="brand-mark" aria-hidden="true">棋</div>
+      <div>
+        <div class="app-title">台灣暗棋</div>
+        <div class="app-subtitle">離線可玩的 PWA 小遊戲</div>
+      </div>
+    </header>
+
+    <main>
+      <section id="homeView" class="view active">
+        <div class="hero-card">
+          <div class="hero-kicker">4 × 8 半棋</div>
+          <h1>翻一顆，定紅黑。</h1>
+          <p>
+            棋盤採木紋底、圓棋子、紅黑對陣設計；AI 會依目前難度搜尋局面，
+            不是單純亂走。
+          </p>
+
+          <div class="home-actions">
+            <button id="startGameBtn" class="primary-btn">遊戲開始</button>
+            <button id="openSettingsBtn" class="secondary-btn">遊戲設定</button>
+          </div>
+
+          <div class="offline-note" id="offlineNote">
+            初次載入後會自動快取。從主畫面開啟時，無網路仍可進入遊戲。
+          </div>
+        </div>
+      </section>
+
+      <section id="settingsView" class="view">
+        <div class="page-card">
+          <div class="page-title-row">
+            <div>
+              <div class="hero-kicker">Settings</div>
+              <h2>遊戲設定</h2>
+            </div>
+            <button id="settingsBackBtn" class="ghost-btn">返回首頁</button>
+          </div>
+
+          <div class="setting-block">
+            <label class="setting-label" for="difficultySelect">AI 難度</label>
+            <select id="difficultySelect" class="select-input">
+              <option value="easy">入門：反應快，搜尋較淺</option>
+              <option value="normal">一般：平衡速度與強度</option>
+              <option value="hard">困難：搜尋較深，會看暗子</option>
+              <option value="master">強敵：較深搜尋，候選步更多</option>
+            </select>
+            <p id="difficultyHelp" class="setting-help"></p>
+          </div>
+
+          <div class="setting-preview">
+            <div class="mini-piece red">帥</div>
+            <div class="mini-piece hidden">暗</div>
+            <div class="mini-piece black">將</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="gameView" class="view">
+        <div class="game-layout">
+          <div class="game-panel">
+            <div class="game-topbar">
+              <button id="gameBackBtn" class="ghost-btn">首頁</button>
+              <button id="newGameBtn" class="secondary-btn compact">重開</button>
+            </div>
+
+            <div class="score-strip">
+              <div class="side-card human">
+                <span>您</span>
+                <strong id="humanColorLabel">未定</strong>
+              </div>
+              <div class="turn-orb" id="turnOrb">先翻</div>
+              <div class="side-card ai">
+                <span>AI</span>
+                <strong id="aiColorLabel">未定</strong>
+              </div>
+            </div>
+
+            <div class="status-box">
+              <div id="statusText" class="status-main">請先翻一顆棋。</div>
+              <div id="detailText" class="status-detail">第一次翻出的顏色歸您，另一色歸 AI。</div>
+            </div>
+
+            <div id="board" class="board" aria-label="暗棋棋盤"></div>
+
+            <div class="rule-hint">
+              炮／包跳吃需同列或同行，且中間剛好隔一顆棋；兵／卒可吃帥／將，帥／將不可吃兵／卒。
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card">
+      <h2 id="modalTitle">訊息</h2>
+      <p id="modalText"></p>
+      <div class="modal-actions">
+        <button id="modalHomeBtn" class="secondary-btn">回首頁</button>
+        <button id="modalRestartBtn" class="primary-btn">再玩一局</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

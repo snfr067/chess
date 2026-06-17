@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="wood" cx="35%" cy="25%" r="75%">
+      <stop offset="0%" stop-color="#ffe6a8"/>
+      <stop offset="45%" stop-color="#b77736"/>
+      <stop offset="100%" stop-color="#3b2113"/>
+    </radialGradient>
+    <radialGradient id="piece" cx="34%" cy="24%" r="75%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="62%" stop-color="#fff0d2"/>
+      <stop offset="100%" stop-color="#d8b374"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#wood)"/>
+  <circle cx="256" cy="256" r="174" fill="url(#piece)" stroke="#f5d48f" stroke-width="24"/>
+  <circle cx="256" cy="256" r="134" fill="none" stroke="#7e4b27" stroke-width="10" opacity="0.55"/>
+  <text x="256" y="310" text-anchor="middle"
+        font-family="PingFang TC, Microsoft JhengHei, sans-serif"
+        font-size="176" font-weight="900" fill="#c82222">棋</text>
+</svg>

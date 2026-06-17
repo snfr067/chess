@@ -1,0 +1,25 @@
+{
+  "name": "台灣暗棋小遊戲",
+  "short_name": "台灣暗棋",
+  "description": "可離線遊玩的台灣暗棋 PWA 小遊戲",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1f150f",
+  "theme_color": "#6b3f24",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./apple-touch-icon.svg",
+      "sizes": "180x180",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
