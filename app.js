@@ -1,3 +1,4 @@
+const APP_VERSION = "mobile-r4-20260617-phone-fit";
 // 台灣暗棋 PWA 版
 // 純前端實作：首頁、設定、遊戲、AI 搜尋、離線快取註冊
 
@@ -1054,13 +1055,15 @@ function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
 
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js").catch(() => {
+    navigator.serviceWorker.register("./service-worker.js?v=mobile-r4-20260617-phone-fit").catch(() => {
       // 不中斷遊戲。若瀏覽器不給註冊，仍可線上遊玩。
     });
   });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  const versionBadge = document.getElementById("versionBadge");
+  if (versionBadge) versionBadge.textContent = `版本：${APP_VERSION}`;
   initDom();
   bindEvents();
   syncSettingsUI();

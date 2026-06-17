@@ -3,57 +3,44 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#352012">
+  <meta name="theme-color" content="#6b3f24">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="台灣暗棋">
   <title>台灣暗棋小遊戲</title>
+  <meta name="app-version" content="mobile-r4-20260617-phone-fit">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./apple-touch-icon.svg">
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?v=mobile-r4-20260617-phone-fit">
 </head>
 <body>
   <div class="app-shell">
     <header class="app-header">
       <div class="brand-mark" aria-hidden="true">棋</div>
-      <div class="brand-copy">
+      <div>
         <div class="app-title">台灣暗棋</div>
-        <div class="app-subtitle">手機橫向優先・可離線 PWA</div>
+        <div class="app-subtitle">離線可玩的 PWA 小遊戲</div>
       </div>
     </header>
 
-    <main class="main-area">
-      <section id="homeView" class="view active home-view">
+    <main>
+      <section id="homeView" class="view home-view active">
         <div class="hero-card">
-          <div class="hero-copy">
-            <div class="hero-kicker">TAIWAN DARK CHESS</div>
-            <h1>翻開暗子，短局對弈。</h1>
-            <p>
-              這版以手機操作重新設計：大按鈕、圓棋子、橫向棋盤、清楚狀態欄；
-              第一次載入完成後，可從主畫面離線開啟。
-            </p>
+          <div class="hero-kicker">4 × 8 半棋</div>
+          <h1>翻一顆，定紅黑。</h1>
+          <p>
+            棋盤採木紋底、圓棋子、紅黑對陣設計；AI 會依目前難度搜尋局面，
+            不是單純亂走。
+          </p>
 
-            <div class="home-actions">
-              <button id="startGameBtn" class="primary-btn big-action">遊戲開始</button>
-              <button id="openSettingsBtn" class="secondary-btn big-action">遊戲設定</button>
-            </div>
+          <div class="home-actions">
+            <button id="startGameBtn" class="primary-btn">遊戲開始</button>
+            <button id="openSettingsBtn" class="secondary-btn">遊戲設定</button>
           </div>
 
-          <div class="phone-preview" aria-hidden="true">
-            <div class="preview-board">
-              <span class="preview-piece hidden">暗</span>
-              <span class="preview-piece red">帥</span>
-              <span class="preview-piece hidden">暗</span>
-              <span class="preview-piece black">卒</span>
-              <span class="preview-piece red">炮</span>
-              <span class="preview-piece hidden">暗</span>
-              <span class="preview-piece black">車</span>
-              <span class="preview-piece hidden">暗</span>
-            </div>
-            <div class="offline-note" id="offlineNote">
-              建議加入 iPhone 主畫面；橫向握持時，棋盤與資訊欄會自動分左右顯示。
-            </div>
+          <div class="offline-note" id="offlineNote">
+            初次載入後會自動快取。從主畫面開啟時，無網路仍可進入遊戲。
           </div>
         </div>
       </section>
@@ -62,7 +49,7 @@
         <div class="page-card settings-card">
           <div class="page-title-row">
             <div>
-              <div class="hero-kicker">SETTINGS</div>
+              <div class="hero-kicker">Settings</div>
               <h2>遊戲設定</h2>
             </div>
             <button id="settingsBackBtn" class="ghost-btn">返回首頁</button>
@@ -88,35 +75,35 @@
       </section>
 
       <section id="gameView" class="view game-view">
-        <div class="game-panel">
-          <div class="game-topbar">
-            <button id="gameBackBtn" class="ghost-btn compact">首頁</button>
-            <button id="newGameBtn" class="secondary-btn compact">重開</button>
-          </div>
-
-          <div class="score-strip">
-            <div class="side-card human">
-              <span>您</span>
-              <strong id="humanColorLabel">未定</strong>
+        <div class="game-layout">
+          <div class="game-panel">
+            <div class="game-topbar">
+              <button id="gameBackBtn" class="ghost-btn">首頁</button>
+              <button id="newGameBtn" class="secondary-btn compact">重開</button>
             </div>
-            <div class="turn-orb" id="turnOrb">先翻</div>
-            <div class="side-card ai">
-              <span>AI</span>
-              <strong id="aiColorLabel">未定</strong>
+
+            <div class="score-strip">
+              <div class="side-card human">
+                <span>您</span>
+                <strong id="humanColorLabel">未定</strong>
+              </div>
+              <div class="turn-orb" id="turnOrb">先翻</div>
+              <div class="side-card ai">
+                <span>AI</span>
+                <strong id="aiColorLabel">未定</strong>
+              </div>
             </div>
-          </div>
 
-          <div class="status-box">
-            <div id="statusText" class="status-main">請先翻一顆棋。</div>
-            <div id="detailText" class="status-detail">第一次翻出的顏色歸您，另一色歸 AI。</div>
-          </div>
+            <div class="status-box">
+              <div id="statusText" class="status-main">請先翻一顆棋。</div>
+              <div id="detailText" class="status-detail">第一次翻出的顏色歸您，另一色歸 AI。</div>
+            </div>
 
-          <div class="board-wrap">
-            <div id="board" class="board" aria-label="暗棋棋盤"></div>
-          </div>
+            <div class="board-wrap"><div id="board" class="board" aria-label="暗棋棋盤"></div></div>
 
-          <div class="rule-hint">
-            炮／包跳吃需同列或同行，且中間剛好隔一顆棋；兵／卒可吃帥／將，帥／將不可吃兵／卒。
+            <div class="rule-hint">
+              炮／包跳吃需同列或同行，且中間剛好隔一顆棋；兵／卒可吃帥／將，帥／將不可吃兵／卒。
+            </div>
           </div>
         </div>
       </section>
@@ -134,6 +121,7 @@
     </div>
   </div>
 
-  <script src="./app.js"></script>
+  <script src="./app.js?v=mobile-r4-20260617-phone-fit"></script>
+  <div id="versionBadge" class="version-badge">版本：mobile-r4-20260617-phone-fit</div>
 </body>
 </html>

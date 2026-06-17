@@ -1,10 +1,10 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-v2";
+const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-r4-20260617-phone-fit";
 
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css",
-  "./app.js",
+  "./style.css?v=mobile-r4-20260617-phone-fit",
+  "./app.js?v=mobile-r4-20260617-phone-fit",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg",
@@ -23,7 +23,7 @@ self.addEventListener("activate", (event) => {
     caches.keys()
       .then((keys) => Promise.all(
         keys
-          .filter((key) => key !== CACHE_NAME)
+          .filter((key) => key.startsWith("taiwan-dark-chess-pwa-") && key !== CACHE_NAME)
           .map((key) => caches.delete(key))
       ))
       .then(() => self.clients.claim())
@@ -33,18 +33,31 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
-  event.respondWith(
-    caches.match(event.request)
-      .then((cached) => {
-        if (cached) return cached;
+  const request = event.request;
+  const accept = request.headers.get("accept") || "";
+  const isNavigation = request.mode === "navigate" || accept.includes("text/html");
 
-        return fetch(event.request)
-          .then((response) => {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-            return response;
-          })
-          .catch(() => caches.match("./index.html"));
-      })
+  if (isNavigation) {
+    event.respondWith(
+      fetch(request, { cache: "no-store" })
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy));
+          return response;
+        })
+        .catch(() => caches.match("./index.html"))
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(request).then((cached) => {
+      const network = fetch(request).then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        return response;
+      });
+      return cached || network.catch(() => caches.match("./index.html"));
+    })
   );
 });

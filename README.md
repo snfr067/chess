@@ -1,32 +1,31 @@
-# 台灣暗棋 PWA 手機版
+# 台灣暗棋 PWA 手機版 v4
 
-這是一個純靜態的台灣暗棋 PWA 小遊戲，可部署到 GitHub Pages。
+這一版針對手機橫向與直向重新整理版面。
 
-## 內容
+## 重點
 
-- 首頁：遊戲開始、遊戲設定
-- 設定頁：AI 難度調整
-- 遊戲頁：4 × 8 暗棋棋盤、玩家對 AI
-- 介面：手機優先，支援直向與橫向；橫向時棋盤在左、狀態與操作在右
-- 離線：使用 Service Worker 快取 App Shell
+- GitHub Pages 靜態部署即可使用。
+- 手機橫向：棋盤在左，資訊與操作在右。
+- 手機直向：自動上下堆疊。
+- 修正上一版棋盤與右側資訊區互相擠壓、覆蓋的問題。
+- 修正缺少 board-wrap 導致橫向 grid 版面沒有正確套用的問題。
+- 版本：mobile-r4-20260617-phone-fit。
 
-## 部署到 GitHub Pages
+## 部署
 
-1. 建立 public repository。
-2. 把本資料夾內所有檔案上傳到 repository 根目錄。
+1. 建立 GitHub public repository。
+2. 將本資料夾內所有檔案上傳到 repository 根目錄。
 3. 到 Settings → Pages。
 4. Source 選 Deploy from a branch。
 5. Branch 選 main，Folder 選 /(root)。
-6. 儲存後開啟 GitHub Pages 網址。
+6. 開啟 GitHub Pages 網址。
 
-## iPhone 使用
+## 更新舊版
 
-1. 用 Safari 開啟 GitHub Pages 網址。
-2. 確認首頁完整載入。
-3. 分享 → 加入主畫面。
-4. 從主畫面開啟。
-5. 首次快取完成後，可在無網路時開啟已快取版本。
+若手機仍顯示舊版，請確認網址列或畫面右下角版本顯示為：
 
-## 注意
+mobile-r4-20260617-phone-fit
 
-若 iOS 清除 Safari 網站資料、系統回收網站資料、或主畫面 Web App 被移除，就需要重新連網載入一次。
+若仍是舊版，請用新網址參數開啟：
+
+?fresh=mobile-r4
