@@ -1,9 +1,9 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-r8-20260617-visible-action-ux";
+const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-r9-20260617-landscape-only";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=mobile-r8-20260617-visible-action-ux",
-  "./app.js?v=mobile-r8-20260617-visible-action-ux",
+  "./style.css?v=mobile-r9-20260617-landscape-only",
+  "./app.js?v=mobile-r9-20260617-landscape-only",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg"

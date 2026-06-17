@@ -27,3 +27,8 @@ http://localhost:8000/
 ## GitHub Pages
 
 把本資料夾內檔案全部放到 repository 根目錄，Pages 設定為 main / root。
+
+
+## v9 橫向限定
+
+這版已改成手機橫向限定：直向手機畫面會顯示「請將手機打橫」，不再嘗試直向堆疊棋盤與資訊區。manifest 也設定為 landscape，加入主畫面後會以橫向為主要使用方式。

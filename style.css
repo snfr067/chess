@@ -334,3 +334,97 @@ p { margin: 12px 0 0; color: var(--muted); line-height: 1.6; }
   .grave-row { grid-template-columns:64px minmax(0,1fr); gap:6px; }
   .grave-piece { width:25px; height:25px; border-width:2px; font-size:12px; }
 }
+
+/* ===== v9: 手機橫向限定，不再嘗試直向手機排版 ===== */
+.rotate-lock {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  place-items: center;
+  color: #fff3dc;
+  background:
+    radial-gradient(circle at 24% 14%, rgba(244, 197, 106, 0.24), transparent 34%),
+    linear-gradient(145deg, #211107 0%, #4d2b15 52%, #180d07 100%);
+}
+.rotate-card {
+  width: min(420px, calc(100vw - 34px));
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 26px 22px;
+  text-align: center;
+  border-radius: 26px;
+  background: rgba(255, 244, 222, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  box-shadow: 0 18px 46px rgba(0,0,0,.32);
+  backdrop-filter: blur(10px);
+}
+.rotate-icon {
+  width: 66px;
+  height: 66px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #32190b;
+  background: linear-gradient(145deg, #ffe39b, #c88932);
+  border: 3px solid rgba(255,255,255,.72);
+  font-size: 38px;
+  font-weight: 1000;
+  box-shadow: 0 10px 22px rgba(0,0,0,.24);
+}
+.rotate-card strong {
+  font-size: 26px;
+  font-weight: 1000;
+  letter-spacing: .04em;
+}
+.rotate-card span {
+  max-width: 330px;
+  color: rgba(255,244,223,.82);
+  font-size: 14px;
+  line-height: 1.55;
+  font-weight: 760;
+}
+
+/* 桌面與手機橫向都採同一套橫向骨架：棋盤左、資訊右。 */
+.game-layout { min-height: calc(100svh - 74px); }
+.game-panel {
+  min-height: calc(100svh - 74px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(250px, 29vw, 330px);
+  grid-template-areas: "board side";
+  align-items: stretch;
+  gap: 10px;
+  overflow: hidden;
+}
+.board-zone { grid-area: board; min-width: 0; min-height: 0; }
+.side-rail {
+  grid-area: side;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 1px;
+}
+.board-frame { width: 100%; height: 100%; min-height: 0; display: grid; place-items: center; }
+.board {
+  width: min(100%, calc((100svh - 96px) * 1.96), 820px);
+  max-height: calc(100svh - 96px);
+}
+
+/* 手機直向只顯示旋轉提示，不再排直向棋盤。 */
+@media (orientation: portrait) and (max-width: 900px) {
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  .app-shell { display: none !important; }
+  .rotate-lock { display: grid; }
+  .toast, .modal, .version-badge { display: none !important; }
+}
+
+/* 手機橫向全螢幕：維持橫向骨架，右側可捲，不互相覆蓋。 */
+@media (orientation: landscape) and (max-width: 980px) and (max-height: 640px) {
+  .side-rail { overflow-y: auto; overflow-x: hidden; }
+  .game-panel { grid-template-columns: minmax(0, 1fr) clamp(218px, 30vw, 270px); grid-template-areas: "board side"; }
+  .board { width: min(100%, calc((100svh - 20px) * 1.92)); max-height: calc(100svh - 20px); }
+}

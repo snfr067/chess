@@ -8,13 +8,20 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="台灣暗棋">
   <title>台灣暗棋小遊戲</title>
-  <meta name="app-version" content="mobile-r8-20260617-visible-action-ux">
+  <meta name="app-version" content="mobile-r9-20260617-landscape-only">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./apple-touch-icon.svg">
-  <link rel="stylesheet" href="./style.css?v=mobile-r8-20260617-visible-action-ux">
+  <link rel="stylesheet" href="./style.css?v=mobile-r9-20260617-landscape-only">
 </head>
 <body>
+  <div class="rotate-lock" role="status" aria-live="polite">
+    <div class="rotate-card">
+      <div class="rotate-icon" aria-hidden="true">↻</div>
+      <strong>請將手機打橫</strong>
+      <span>這版暗棋只設計橫向遊玩；直向不再硬排版，避免棋盤與資訊區擠在一起。</span>
+    </div>
+  </div>
   <div class="app-shell">
     <header class="app-header">
       <div class="brand-mark" aria-hidden="true">棋</div>
@@ -181,7 +188,7 @@
     </div>
   </div>
 
-  <script src="./app.js?v=mobile-r8-20260617-visible-action-ux"></script>
-  <div id="versionBadge" class="version-badge">版本：mobile-r8-20260617-visible-action-ux</div>
+  <script src="./app.js?v=mobile-r9-20260617-landscape-only"></script>
+  <div id="versionBadge" class="version-badge">版本：mobile-r9-20260617-landscape-only</div>
 </body>
 </html>
