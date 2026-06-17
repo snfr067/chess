@@ -1,31 +1,32 @@
-# 台灣暗棋 PWA 手機版 v4
+# 台灣暗棋 PWA v7
 
-這一版針對手機橫向與直向重新整理版面。
+手機橫向優先版。新增：
 
-## 重點
+- AI 每步延遲設定，可在「遊戲設定」調整 0.2～2.5 秒。
+- AI 行動前會標示來源與目標，再依設定秒數執行。
+- 翻棋、移動、吃子、吃暗棋失敗都有簡單動畫。
+- 保留 v6 的連吃規則與不偷看暗棋 AI。
 
-- GitHub Pages 靜態部署即可使用。
-- 手機橫向：棋盤在左，資訊與操作在右。
-- 手機直向：自動上下堆疊。
-- 修正上一版棋盤與右側資訊區互相擠壓、覆蓋的問題。
-- 修正缺少 board-wrap 導致橫向 grid 版面沒有正確套用的問題。
-- 版本：mobile-r4-20260617-phone-fit。
+## 本機測試
 
-## 部署
+在此資料夾執行：
 
-1. 建立 GitHub public repository。
-2. 將本資料夾內所有檔案上傳到 repository 根目錄。
-3. 到 Settings → Pages。
-4. Source 選 Deploy from a branch。
-5. Branch 選 main，Folder 選 /(root)。
-6. 開啟 GitHub Pages 網址。
+```bash
+python -m http.server 8000
+```
 
-## 更新舊版
+或 Windows：
 
-若手機仍顯示舊版，請確認網址列或畫面右下角版本顯示為：
+```powershell
+py -m http.server 8000
+```
 
-mobile-r4-20260617-phone-fit
+瀏覽器開啟：
 
-若仍是舊版，請用新網址參數開啟：
+```text
+http://localhost:8000/
+```
 
-?fresh=mobile-r4
+## GitHub Pages
+
+把本資料夾內全部檔案放到 GitHub repository 根目錄，Pages 設定為 `main / root`。

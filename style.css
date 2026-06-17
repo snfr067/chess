@@ -264,3 +264,547 @@ h2 { font-size: clamp(28px, 8vw, 46px); letter-spacing: -0.04em; }
 }
 
 @keyframes viewIn { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+
+/* =========================
+   v6：墳墓區與最後一手標示
+   ========================= */
+.cell {
+  position: relative;
+}
+
+.cell.last-move-cell {
+  background: rgba(255, 209, 92, 0.38);
+  border-color: rgba(255, 232, 147, 0.95);
+  box-shadow: inset 0 0 0 2px rgba(117, 68, 20, 0.18), 0 0 0 2px rgba(255, 220, 109, 0.40);
+}
+
+.cell.last-move-cell::after {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  top: clamp(2px, 0.45vw, 4px);
+  right: clamp(2px, 0.45vw, 4px);
+  width: clamp(8px, 1.7vw, 13px);
+  height: clamp(8px, 1.7vw, 13px);
+  border-radius: 50%;
+  background: linear-gradient(145deg, #fff3a6, #d6861d);
+  border: 2px solid rgba(255, 255, 255, 0.88);
+  box-shadow: 0 2px 7px rgba(83, 42, 13, 0.42);
+  pointer-events: none;
+}
+
+.piece-btn.last-move-piece {
+  box-shadow: 0 0 0 4px rgba(255, 207, 74, 0.92), inset 0 5px 8px rgba(255,255,255,0.68), inset 0 -7px 10px rgba(80, 42, 18, 0.12), 0 8px 15px rgba(73, 38, 10, 0.30);
+}
+
+.graveyard {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.60), rgba(239, 218, 184, 0.62));
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.graveyard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.graveyard-kicker {
+  color: #95602d;
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.graveyard-head strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 15px;
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+}
+
+.captured-count {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #351a09;
+  background: linear-gradient(145deg, #ffe6a5, #cc8a33);
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.graveyard-rows {
+  display: grid;
+  gap: 7px;
+}
+
+.grave-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.grave-label {
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 950;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.red-label { color: var(--red); }
+.black-label { color: var(--black); }
+
+.grave-list {
+  min-width: 0;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 3px;
+  border-radius: 13px;
+  background: rgba(72, 41, 19, 0.10);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.grave-list.empty-note {
+  color: rgba(100, 76, 52, 0.72);
+  font-size: 12px;
+  font-weight: 850;
+  padding-left: 9px;
+}
+
+.grave-piece {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 3px solid #ead7af;
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: -0.05em;
+  box-shadow: inset 0 3px 5px rgba(255,255,255,0.62), 0 4px 7px rgba(48, 25, 10, 0.18);
+}
+
+.grave-piece.red-piece {
+  color: var(--red);
+  background: radial-gradient(circle at 34% 24%, #ffffff, #fff1d8 68%, #dfc28d);
+}
+
+.grave-piece.black-piece {
+  color: var(--black);
+  background: radial-gradient(circle at 34% 24%, #ffffff, #eef2f7 68%, #b8c1cc);
+}
+
+@media (orientation: landscape) and (max-width: 950px) and (max-height: 620px) {
+  .game-panel {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "board topbar"
+      "board score"
+      "board status"
+      "board grave";
+  }
+
+  .graveyard {
+    grid-area: grave;
+    align-self: end;
+    padding: 7px;
+    border-radius: 14px;
+    max-height: 105px;
+  }
+
+  .graveyard-head {
+    margin-bottom: 5px;
+  }
+
+  .graveyard-kicker {
+    display: none;
+  }
+
+  .graveyard-head strong {
+    margin-top: 0;
+    font-size: 12px;
+  }
+
+  .captured-count {
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border-width: 1px;
+    font-size: 10px;
+  }
+
+  .graveyard-rows {
+    gap: 4px;
+  }
+
+  .grave-row {
+    grid-template-columns: 54px minmax(0, 1fr);
+    gap: 5px;
+  }
+
+  .grave-label {
+    font-size: 9px;
+  }
+
+  .grave-list {
+    min-height: 25px;
+    max-height: 29px;
+    gap: 3px;
+    padding: 2px;
+    border-radius: 10px;
+  }
+
+  .grave-list.empty-note {
+    font-size: 10px;
+    padding-left: 7px;
+  }
+
+  .grave-piece {
+    width: 22px;
+    height: 22px;
+    border-width: 2px;
+    font-size: 10.5px;
+  }
+
+  .cell.last-move-cell::after {
+    width: 9px;
+    height: 9px;
+    border-width: 1px;
+  }
+}
+
+@media (orientation: landscape) and (max-width: 720px) {
+  .game-panel {
+    grid-template-columns: minmax(0, 1fr) 214px;
+  }
+
+  .grave-row {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .grave-label {
+    display: none;
+  }
+}
+
+@media (max-height: 430px) and (orientation: landscape) {
+  .game-panel {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "board topbar"
+      "board score"
+      "board status"
+      "board grave";
+  }
+
+  .status-box {
+    display: block;
+    overflow: auto;
+  }
+
+  .graveyard {
+    display: block;
+  }
+}
+
+@media (max-width: 430px) and (orientation: portrait) {
+  .graveyard {
+    padding: 8px;
+    border-radius: 16px;
+  }
+
+  .grave-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .grave-piece {
+    width: 25px;
+    height: 25px;
+    border-width: 2px;
+    font-size: 12px;
+  }
+}
+
+/* =========================
+   v6：設定頁連吃開關與結束回合
+   ========================= */
+.hidden { display: none !important; }
+
+.setting-toggle-block {
+  margin-top: 16px;
+}
+
+.checkbox-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  width: 24px;
+  height: 24px;
+  accent-color: #c98931;
+}
+
+.checkbox-row strong {
+  display: block;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.checkbox-row small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (orientation: landscape) and (max-width: 950px) and (max-height: 620px) {
+  .checkbox-row {
+    padding: 10px 11px;
+    border-radius: 15px;
+    gap: 9px;
+  }
+
+  .checkbox-row input {
+    width: 20px;
+    height: 20px;
+  }
+
+  .checkbox-row strong {
+    font-size: 13px;
+  }
+
+  .checkbox-row small {
+    font-size: 10.5px;
+    line-height: 1.34;
+  }
+
+  #endTurnBtn {
+    min-width: 74px;
+  }
+}
+
+.game-topbar > button {
+  min-width: 0;
+}
+
+@media (orientation: landscape) and (max-width: 950px) and (max-height: 620px) {
+  .game-topbar {
+    display: grid;
+    grid-template-columns: 1fr 1.18fr 1fr;
+    gap: 5px;
+  }
+
+  .game-topbar .ghost-btn,
+  .game-topbar .secondary-btn,
+  .game-topbar .primary-btn {
+    padding-left: 6px;
+    padding-right: 6px;
+    font-size: 12px;
+  }
+}
+
+/* =========================
+   v7：AI 每步延遲與動作動畫
+   ========================= */
+.delay-setting-block {
+  margin-top: 14px;
+  padding: 13px 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.50);
+  border: 1px solid var(--line);
+}
+
+.delay-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.delay-label-row .setting-label {
+  margin-bottom: 0;
+}
+
+.delay-value {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: linear-gradient(145deg, #ffe6a5, #d3953a);
+  color: #32180b;
+  font-size: 12px;
+  font-weight: 950;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+}
+
+.range-input {
+  width: 100%;
+  accent-color: #c98931;
+}
+
+.cell.ai-source-cell {
+  box-shadow: inset 0 0 0 2px rgba(61, 121, 212, 0.55), 0 0 0 2px rgba(128, 181, 255, 0.40);
+}
+
+.cell.ai-target-cell {
+  background: rgba(255, 223, 139, 0.45);
+  box-shadow: inset 0 0 0 2px rgba(214, 132, 24, 0.55), 0 0 0 3px rgba(255, 216, 96, 0.32);
+}
+
+.cell.ai-source-cell::before,
+.cell.ai-target-cell::before {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 2px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 950;
+  line-height: 1.2;
+  pointer-events: none;
+  color: #fff7e8;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.38);
+}
+
+.cell.ai-source-cell::before {
+  content: "起";
+  background: rgba(44, 95, 172, 0.88);
+}
+
+.cell.ai-target-cell::before {
+  content: "目";
+  background: rgba(162, 92, 18, 0.90);
+}
+
+.cell.anim-from-cell {
+  animation: sourcePulse 620ms ease-out both;
+}
+
+.cell.anim-to-cell {
+  animation: targetGlow 700ms ease-out both;
+}
+
+.cell.anim-fail-cell {
+  box-shadow: inset 0 0 0 2px rgba(180, 48, 48, 0.58), 0 0 0 3px rgba(245, 84, 84, 0.22);
+}
+
+.piece-btn.flip-anim {
+  animation: flipReveal 620ms ease-out both;
+}
+
+.piece-btn.move-anim {
+  animation: moveLand 620ms ease-out both;
+}
+
+.piece-btn.capture-anim {
+  animation: captureLand 640ms ease-out both;
+}
+
+.graveyard:has(.grave-piece) .grave-piece:first-child {
+  animation: gravePop 520ms ease-out both;
+}
+
+@keyframes sourcePulse {
+  0% { transform: scale(1); opacity: 1; }
+  35% { transform: scale(0.96); opacity: 0.78; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes targetGlow {
+  0% { filter: brightness(1); }
+  45% { filter: brightness(1.18); }
+  100% { filter: brightness(1); }
+}
+
+@keyframes flipReveal {
+  0% { transform: rotateY(0deg) scale(0.92); filter: brightness(0.82); }
+  48% { transform: rotateY(88deg) scale(0.98); filter: brightness(1.15); }
+  100% { transform: rotateY(0deg) scale(1); filter: brightness(1); }
+}
+
+@keyframes moveLand {
+  0% { transform: translateY(-10%) scale(0.88); opacity: 0.70; }
+  58% { transform: translateY(2%) scale(1.08); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+@keyframes captureLand {
+  0% { transform: scale(0.84); filter: brightness(1.24); }
+  55% { transform: scale(1.12); filter: brightness(1.06); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
+@keyframes gravePop {
+  0% { transform: scale(0.70); opacity: 0; }
+  70% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@media (orientation: landscape) and (max-width: 950px) and (max-height: 620px) {
+  .delay-setting-block {
+    margin-top: 10px;
+    padding: 10px 11px;
+    border-radius: 15px;
+  }
+
+  .delay-label-row {
+    margin-bottom: 5px;
+  }
+
+  .delay-value {
+    padding: 3px 8px;
+    font-size: 10.5px;
+  }
+
+  .range-input {
+    height: 20px;
+  }
+
+  .cell.ai-source-cell::before,
+  .cell.ai-target-cell::before {
+    font-size: 8px;
+    padding: 1px 4px;
+    bottom: 1px;
+  }
+}
+
+/* v7：設定頁內容增多時允許捲動，不讓橫向手機裁掉延遲設定 */
+.settings-card {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}

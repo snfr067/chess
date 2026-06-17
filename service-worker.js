@@ -1,10 +1,10 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-r4-20260617-phone-fit";
+const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-r7-20260617-ai-delay-animation";
 
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=mobile-r4-20260617-phone-fit",
-  "./app.js?v=mobile-r4-20260617-phone-fit",
+  "./style.css?v=mobile-r7-20260617-ai-delay-animation",
+  "./app.js?v=mobile-r7-20260617-ai-delay-animation",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg",
