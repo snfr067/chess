@@ -1,51 +1,32 @@
-# 台灣暗棋 PWA 小遊戲
+# 台灣暗棋 PWA 手機版
 
-這是一個純靜態 PWA 版本暗棋小遊戲，可部署到 GitHub Pages。
+這是一個純靜態的台灣暗棋 PWA 小遊戲，可部署到 GitHub Pages。
 
-## 檔案
+## 內容
 
-- `index.html`：首頁、設定頁、遊戲頁
-- `style.css`：手機優先的暗棋介面
-- `app.js`：暗棋規則、AI 搜尋、頁面切換
-- `manifest.webmanifest`：PWA 安裝資訊
-- `service-worker.js`：離線快取
-- `icon.svg`、`apple-touch-icon.svg`：圖示
+- 首頁：遊戲開始、遊戲設定
+- 設定頁：AI 難度調整
+- 遊戲頁：4 × 8 暗棋棋盤、玩家對 AI
+- 介面：手機優先，支援直向與橫向；橫向時棋盤在左、狀態與操作在右
+- 離線：使用 Service Worker 快取 App Shell
 
-## 本機測試
+## 部署到 GitHub Pages
 
-不要直接用雙擊 `index.html` 測 Service Worker，請用本機伺服器。
+1. 建立 public repository。
+2. 把本資料夾內所有檔案上傳到 repository 根目錄。
+3. 到 Settings → Pages。
+4. Source 選 Deploy from a branch。
+5. Branch 選 main，Folder 選 /(root)。
+6. 儲存後開啟 GitHub Pages 網址。
 
-Python 方式：
+## iPhone 使用
 
-```bash
-python -m http.server 8000
-```
+1. 用 Safari 開啟 GitHub Pages 網址。
+2. 確認首頁完整載入。
+3. 分享 → 加入主畫面。
+4. 從主畫面開啟。
+5. 首次快取完成後，可在無網路時開啟已快取版本。
 
-然後開：
+## 注意
 
-```text
-http://localhost:8000
-```
-
-## GitHub Pages 部署
-
-1. 到 GitHub 新增一個 public repository，例如 `dark-chess-pwa`
-2. 把這個資料夾裡的所有檔案上傳到 repository 根目錄
-3. 進入 repository 的 `Settings`
-4. 左側選 `Pages`
-5. `Source` 選 `Deploy from a branch`
-6. `Branch` 選 `main`
-7. 資料夾選 `/(root)`
-8. 按 `Save`
-9. 等 GitHub Pages 完成部署
-10. 開啟網址：`https://您的帳號.github.io/dark-chess-pwa/`
-
-## iPhone 加入主畫面
-
-1. 用 Safari 開啟 GitHub Pages 網址
-2. 點分享
-3. 選「加入主畫面」
-4. 名稱可改成「台灣暗棋」
-5. 按新增
-
-第一次開啟需要網路；完成載入後，Service Worker 會快取檔案，之後可在無網路時從主畫面開啟。
+若 iOS 清除 Safari 網站資料、系統回收網站資料、或主畫面 Web App 被移除，就需要重新連網載入一次。

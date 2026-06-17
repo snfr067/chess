@@ -1,4 +1,4 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-v1";
+const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-v2";
 
 const APP_SHELL = [
   "./",
