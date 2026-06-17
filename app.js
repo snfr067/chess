@@ -1,4 +1,4 @@
-const APP_VERSION = "mobile-r8-20260617-visible-action-ux";
+const APP_VERSION = "mobile-r10-20260617-landscape-polish";
 
 const ROWS = 4;
 const COLS = 8;
@@ -47,8 +47,7 @@ function initDom() {
   for (const id of [
     "homeView", "settingsView", "gameView", "startGameBtn", "openSettingsBtn", "settingsBackBtn", "gameBackBtn", "newGameBtn", "endTurnBtn",
     "difficultySelect", "comboRuleCheckbox", "aiDelayRange", "aiDelayValue", "difficultyHelp", "board", "statusText", "detailText",
-    "humanColorLabel", "aiColorLabel", "turnOrb", "redGrave", "blackGrave", "capturedCount", "actionVisual", "actionActor", "actionKind",
-    "actionFrom", "actionTo", "actionReveal", "actionCaptured", "toast", "modal", "modalTitle", "modalText", "modalHomeBtn", "modalRestartBtn"
+    "humanColorLabel", "aiColorLabel", "turnOrb", "redGrave", "blackGrave", "capturedCount", "toast", "modal", "modalTitle", "modalText", "modalHomeBtn", "modalRestartBtn"
   ]) dom[id] = document.getElementById(id);
 }
 
@@ -212,10 +211,10 @@ function render() {
   dom.turnOrb.textContent = state.turnColor === null ? "先翻" : state.combo.active && state.currentPlayer === HUMAN ? "連吃" : state.currentPlayer === HUMAN ? "您" : "AI";
   dom.endTurnBtn.classList.toggle("hidden", !(state.combo.active && state.currentPlayer === HUMAN && !state.aiThinking && !state.locked));
   renderGraveyard();
-  renderActionVisual();
 }
 
 function renderActionVisual() {
+  if (!dom.actionVisual) return;
   const viz = state.actionViz;
   dom.actionVisual.classList.toggle("idle", !viz);
   dom.actionVisual.classList.toggle("pulse", Boolean(viz && viz.pulse));
@@ -882,7 +881,7 @@ function sameAction(a, b) { return a.length === b.length && a.every((value, inde
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=mobile-r8-20260617-visible-action-ux").catch(() => {});
+    navigator.serviceWorker.register("./service-worker.js?v=mobile-r10-20260617-landscape-polish").catch(() => {});
   });
 }
 
