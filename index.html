@@ -8,36 +8,21 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="台灣暗棋">
   <title>台灣暗棋小遊戲</title>
-  <meta name="app-version" content="mobile-r10-20260617-landscape-polish">
+  <meta name="app-version" content="mobile-r15-20260618-topbar-score-fix">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./apple-touch-icon.svg">
-  <link rel="stylesheet" href="./style.css?v=mobile-r10-20260617-landscape-polish">
+  <link rel="stylesheet" href="./style.css?v=mobile-r15-20260618-topbar-score-fix">
 </head>
 <body>
-  <div class="rotate-lock" role="status" aria-live="polite">
-    <div class="rotate-card">
-      <div class="rotate-icon" aria-hidden="true">↻</div>
-      <strong>請將手機打橫</strong>
-      <span>這版暗棋只設計橫向遊玩；直向不再硬排版，避免棋盤與資訊區擠在一起。</span>
-    </div>
-  </div>
   <div class="app-shell">
-    <header class="app-header">
-      <div class="brand-mark" aria-hidden="true">棋</div>
-      <div>
-        <div class="app-title">台灣暗棋</div>
-        <div class="app-subtitle">離線可玩的 PWA 小遊戲</div>
-      </div>
-    </header>
-
     <main>
       <section id="homeView" class="view home-view active">
         <div class="hero-card">
           <div class="hero-copy">
             <div class="hero-kicker">4 × 8 半棋</div>
             <h1>翻一顆，定紅黑。</h1>
-            <p>手機橫向優先設計；棋盤、墳墓與上一步動作會用動畫和標示呈現，不靠長篇文字猜局面。</p>
+            <p>固定橫向畫布；棋盤、墳墓與動作動畫都用同一套橫向介面呈現。</p>
             <div class="home-actions">
               <button id="startGameBtn" class="primary-btn">遊戲開始</button>
               <button id="openSettingsBtn" class="secondary-btn">遊戲設定</button>
@@ -99,20 +84,37 @@
 
       <section id="gameView" class="view game-view">
         <div class="game-layout">
-          <div class="game-panel">
-            <div class="board-zone">
-              <div class="board-frame">
-                <div id="board" class="board" aria-label="暗棋棋盤"></div>
-              </div>
-            </div>
-
-            <aside class="side-rail" aria-label="遊戲資訊">
+          <div class="game-panel fixed-landscape-layout">
+            <aside class="left-rail" aria-label="玩家操作與墳墓">
               <div class="game-topbar">
                 <button id="gameBackBtn" class="ghost-btn">首頁</button>
                 <button id="newGameBtn" class="secondary-btn compact">重開</button>
                 <button id="endTurnBtn" class="primary-btn compact hidden">結束回合</button>
               </div>
 
+              <section class="graveyard side-grave human-grave" aria-label="您的墳墓區">
+                <div class="graveyard-head">
+                  <div>
+                    <div class="graveyard-kicker">Captured</div>
+                    <strong id="leftGraveTitle">您墳墓</strong>
+                  </div>
+                  <span id="leftGraveCount" class="captured-count">0/16</span>
+                </div>
+                <div id="redGrave" class="grave-list reserve-grave" aria-label="您的被吃棋子"></div>
+              </section>
+            </aside>
+
+            <section class="board-zone center-board-zone" aria-label="棋盤區">
+              <div class="board-frame">
+                <div id="board" class="board" aria-label="暗棋棋盤"></div>
+              </div>
+              <div class="status-box visual-only-status" aria-hidden="true">
+                <div id="statusText" class="status-main">請先翻一顆棋。</div>
+                <div id="detailText" class="status-detail">第一次翻出的顏色歸您，另一色歸 AI。</div>
+              </div>
+            </section>
+
+            <aside class="right-rail" aria-label="對局資訊與 AI 墳墓">
               <div class="score-strip">
                 <div class="side-card human">
                   <span>您</span>
@@ -124,33 +126,19 @@
                   <strong id="aiColorLabel">未定</strong>
                 </div>
               </div>
-<div class="status-box">
-                <div id="statusText" class="status-main">請先翻一顆棋。</div>
-                <div id="detailText" class="status-detail">第一次翻出的顏色歸您，另一色歸 AI。</div>
-              </div>
 
-              <section class="graveyard" aria-label="被吃掉的棋子">
+              <section class="graveyard side-grave ai-grave" aria-label="AI 墳墓區">
                 <div class="graveyard-head">
                   <div>
                     <div class="graveyard-kicker">Captured</div>
-                    <strong>墳墓</strong>
+                    <strong id="rightGraveTitle">AI 墳墓</strong>
                   </div>
-                  <span id="capturedCount" class="captured-count">0</span>
+                  <span id="rightGraveCount" class="captured-count">0/16</span>
                 </div>
-
-                <div class="graveyard-rows">
-                  <div class="grave-row">
-                    <span class="grave-label red-label">紅方被吃</span>
-                    <div id="redGrave" class="grave-list empty-note">尚無</div>
-                  </div>
-                  <div class="grave-row">
-                    <span class="grave-label black-label">黑方被吃</span>
-                    <div id="blackGrave" class="grave-list empty-note">尚無</div>
-                  </div>
-                </div>
+                <div id="blackGrave" class="grave-list reserve-grave" aria-label="AI 的被吃棋子"></div>
               </section>
 
-              <div class="rule-hint">炮／包只能跳吃；連吃只能用同一顆棋繼續食用，不能改移動到空格。</div>
+              <span id="capturedCount" class="captured-count total-captured hidden">0</span>
             </aside>
           </div>
         </div>
@@ -171,7 +159,7 @@
     </div>
   </div>
 
-  <script src="./app.js?v=mobile-r10-20260617-landscape-polish"></script>
-  <div id="versionBadge" class="version-badge">版本：mobile-r10-20260617-landscape-polish</div>
+  <script src="./app.js?v=mobile-r15-20260618-topbar-score-fix"></script>
+  <div id="versionBadge" class="version-badge">版本：mobile-r15-20260618-topbar-score-fix</div>
 </body>
 </html>

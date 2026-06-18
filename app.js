@@ -1,4 +1,4 @@
-const APP_VERSION = "mobile-r10-20260617-landscape-polish";
+const APP_VERSION = "mobile-r15-20260618-topbar-score-fix";
 
 const ROWS = 4;
 const COLS = 8;
@@ -47,7 +47,7 @@ function initDom() {
   for (const id of [
     "homeView", "settingsView", "gameView", "startGameBtn", "openSettingsBtn", "settingsBackBtn", "gameBackBtn", "newGameBtn", "endTurnBtn",
     "difficultySelect", "comboRuleCheckbox", "aiDelayRange", "aiDelayValue", "difficultyHelp", "board", "statusText", "detailText",
-    "humanColorLabel", "aiColorLabel", "turnOrb", "redGrave", "blackGrave", "capturedCount", "toast", "modal", "modalTitle", "modalText", "modalHomeBtn", "modalRestartBtn"
+    "humanColorLabel", "aiColorLabel", "turnOrb", "redGrave", "blackGrave", "capturedCount", "leftGraveTitle", "rightGraveTitle", "leftGraveCount", "rightGraveCount", "toast", "modal", "modalTitle", "modalText", "modalHomeBtn", "modalRestartBtn"
   ]) dom[id] = document.getElementById(id);
 }
 
@@ -74,6 +74,7 @@ function showView(name) {
   dom.homeView.classList.toggle("active", name === "home");
   dom.settingsView.classList.toggle("active", name === "settings");
   dom.gameView.classList.toggle("active", name === "game");
+  document.body.classList.toggle("is-game-view", name === "game");
 }
 
 function syncSettingsUI() {
@@ -214,7 +215,6 @@ function render() {
 }
 
 function renderActionVisual() {
-  if (!dom.actionVisual) return;
   const viz = state.actionViz;
   dom.actionVisual.classList.toggle("idle", !viz);
   dom.actionVisual.classList.toggle("pulse", Boolean(viz && viz.pulse));
@@ -249,24 +249,50 @@ function fillEventChip(el, piece, cls, label) {
 
 function renderGraveyard() {
   const captured = state.captured || [];
-  const redPieces = captured.filter((piece) => piece.color === "red");
-  const blackPieces = captured.filter((piece) => piece.color === "black");
+  const humanColor = state.playerColor[HUMAN];
+  const aiColor = state.playerColor[AI];
+
+  const leftPieces = humanColor
+    ? captured.filter((piece) => piece.color === humanColor)
+    : captured.filter((piece) => piece.color === "black");
+  const rightPieces = aiColor
+    ? captured.filter((piece) => piece.color === aiColor)
+    : captured.filter((piece) => piece.color === "red");
+
   dom.capturedCount.textContent = String(captured.length);
-  fillGraveList(dom.redGrave, redPieces);
-  fillGraveList(dom.blackGrave, blackPieces);
+  if (dom.leftGraveTitle) dom.leftGraveTitle.textContent = "您墳墓";
+  if (dom.rightGraveTitle) dom.rightGraveTitle.textContent = "AI 墳墓";
+  if (dom.leftGraveCount) dom.leftGraveCount.textContent = `${leftPieces.length}/16`;
+  if (dom.rightGraveCount) dom.rightGraveCount.textContent = `${rightPieces.length}/16`;
+
+  fillGraveList(dom.redGrave, leftPieces);
+  fillGraveList(dom.blackGrave, rightPieces);
 }
 
 function fillGraveList(container, pieces) {
   container.innerHTML = "";
-  container.classList.toggle("empty-note", pieces.length === 0);
-  if (pieces.length === 0) { container.textContent = "尚無"; return; }
-  for (const piece of [...pieces].reverse()) {
+  container.classList.remove("empty-note");
+  const ordered = [...pieces].reverse();
+
+  for (let i = 0; i < 16; i += 1) {
+    const piece = ordered[i] || null;
+    const slot = document.createElement("span");
+    slot.className = "grave-slot";
+
+    if (!piece) {
+      slot.classList.add("empty-slot");
+      container.appendChild(slot);
+      continue;
+    }
+
+    slot.classList.add("filled-slot");
     const chip = document.createElement("span");
     chip.className = `grave-piece ${piece.color === "red" ? "red-piece" : "black-piece"}`;
     if (state.lastCapturedId && piece.id === state.lastCapturedId) chip.classList.add("new-captured");
     chip.textContent = pieceName(piece);
     chip.title = `${colorLabel(piece.color)} ${pieceName(piece)}`;
-    container.appendChild(chip);
+    slot.appendChild(chip);
+    container.appendChild(slot);
   }
 }
 
@@ -881,7 +907,7 @@ function sameAction(a, b) { return a.length === b.length && a.every((value, inde
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=mobile-r10-20260617-landscape-polish").catch(() => {});
+    navigator.serviceWorker.register("./service-worker.js?v=mobile-r15-20260618-topbar-score-fix").catch(() => {});
   });
 }
 
