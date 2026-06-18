@@ -1,4 +1,4 @@
-const APP_VERSION = "mobile-r15-20260618-topbar-score-fix";
+const APP_VERSION = "mobile-r15-safearea-fix-001";
 
 const ROWS = 4;
 const COLS = 8;
@@ -12,10 +12,10 @@ const BLACK_NAMES = { K: "將", A: "士", E: "象", R: "車", N: "馬", C: "包"
 const PIECE_COUNTS = { K: 1, A: 2, E: 2, R: 2, N: 2, C: 2, P: 5 };
 
 const DIFFICULTIES = {
-  easy: { label: "入門", depth: 1, branchLimit: 10, riskTaste: 0.85, help: "反應最快；AI 只用已翻開、已被吃與剩餘棋種機率估算。" },
-  normal: { label: "一般", depth: 3, branchLimit: 16, riskTaste: 1.0, help: "速度與強度平衡；AI 不偷看暗棋，用公開資訊估算翻棋與吃暗棋風險。" },
-  hard: { label: "困難", depth: 4, branchLimit: 20, riskTaste: 1.15, help: "搜尋較深；AI 更重視剩餘兵卒、帥將與炮包風險。" },
-  master: { label: "強敵", depth: 5, branchLimit: 24, riskTaste: 1.28, help: "候選步更多，估算更細；仍不讀取暗棋真實內容。" },
+  easy: { label: "入門", depth: 1, branchLimit: 10, riskTaste: 0.85, help: "反應最快。" },
+  normal: { label: "一般", depth: 3, branchLimit: 16, riskTaste: 1.0, help: "速度與強度平衡。" },
+  hard: { label: "困難", depth: 4, branchLimit: 20, riskTaste: 1.15, help: "搜尋較深，重視風險。" },
+  master: { label: "強敵", depth: 5, branchLimit: 24, riskTaste: 1.28, help: "候選步更多，估算更細。" },
 };
 
 let state = null;
@@ -907,7 +907,7 @@ function sameAction(a, b) { return a.length === b.length && a.every((value, inde
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=mobile-r15-20260618-topbar-score-fix").catch(() => {});
+    navigator.serviceWorker.register("./service-worker.js?v=mobile-r15-safearea-fix-001").catch(() => {});
   });
 }
 

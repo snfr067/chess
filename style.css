@@ -1358,3 +1358,30 @@ h2 { font-size: clamp(26px, 6.7vmin, 46px) !important; }
     font-size: clamp(11px, 3.05vmin, 17px) !important;
   }
 }
+/* ===== safe area fix: avoid iPhone status bar overlap ===== */
+:root {
+  --phone-status-gap: max(28px, env(safe-area-inset-top));
+  --phone-side-gap: max(10px, env(safe-area-inset-left), env(safe-area-inset-right));
+  --phone-bottom-gap: max(8px, env(safe-area-inset-bottom));
+}
+
+/* 橫拿手機或桌面模擬橫向時，正常保留上方安全距離 */
+.app-shell {
+  padding:
+    var(--phone-status-gap)
+    var(--phone-side-gap)
+    var(--phone-bottom-gap)
+    var(--phone-side-gap) !important;
+}
+
+/* 直拿手機但畫面仍強制橫向時：
+   旋轉後，原本 app-shell 的 left padding 會變成實際螢幕最上方留白 */
+@media (max-aspect-ratio: 1/1) {
+  .app-shell {
+    padding:
+      var(--phone-side-gap)
+      var(--phone-side-gap)
+      var(--phone-bottom-gap)
+      var(--phone-status-gap) !important;
+  }
+}

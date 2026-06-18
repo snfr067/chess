@@ -1,9 +1,9 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-r15-20260618-topbar-score-fix";
+const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-r15-safearea-fix-001";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=mobile-r15-20260618-topbar-score-fix",
-  "./app.js?v=mobile-r15-20260618-topbar-score-fix",
+  "./style.css?v=mobile-r15-safearea-fix-001",
+  "./app.js?v=mobile-r15-safearea-fix-001",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg"
