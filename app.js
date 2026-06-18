@@ -648,7 +648,13 @@ function generateNonFlipActions(board, color) { return generateActions(board, co
 function orderActions(board, actions, aiColor, humanColor, diff) { return actions.map((action) => ({ action, score: quickActionScore(board, action, aiColor, humanColor, diff), key: action.join("-") })).sort((a, b) => b.score !== a.score ? b.score - a.score : b.key.localeCompare(a.key)).map((item) => item.action); }
 
 function findBestAction(board, aiColor, humanColor, diff, options = {}) {
-  let actions = generateActions(board, aiColor, { includeFlips: true, includeMoves: true, includeCaptures: true, includeDarkCaptures: Boolean(options.includeDarkCaptures) });
+  return options.includeDarkCaptures
+    ? findBestComboRuleAction(board, aiColor, humanColor, diff)
+    : findBestGeneralRuleAction(board, aiColor, humanColor, diff);
+}
+
+function findBestGeneralRuleAction(board, aiColor, humanColor, diff) {
+  let actions = generateActions(board, aiColor, { includeFlips: true, includeMoves: true, includeCaptures: true, includeDarkCaptures: false });
   if (actions.length === 0) return null;
   actions = orderActions(board, actions, aiColor, humanColor, diff).slice(0, diff.branchLimit);
   let bestScore = -Infinity, bestAction = null, alpha = -Infinity, beta = Infinity;
@@ -663,6 +669,98 @@ function findBestAction(board, aiColor, humanColor, diff, options = {}) {
     alpha = Math.max(alpha, bestScore);
   }
   return bestAction;
+}
+
+function findBestComboRuleAction(board, aiColor, humanColor, diff) {
+  const actions = generateActions(board, aiColor, { includeFlips: true, includeMoves: true, includeCaptures: true, includeDarkCaptures: true });
+  if (actions.length === 0) return null;
+
+  let bestScore = -Infinity;
+  let bestAction = null;
+  const scored = actions.map((action) => ({ action, score: comboOpeningActionScore(board, action, aiColor, humanColor, diff) }));
+  scored.sort((a, b) => b.score !== a.score ? b.score - a.score : b.action.join("-").localeCompare(a.action.join("-")));
+
+  for (const item of scored.slice(0, diff.branchLimit)) {
+    if (item.score > bestScore) {
+      bestScore = item.score;
+      bestAction = item.action;
+    }
+  }
+  return bestAction;
+}
+
+function comboOpeningActionScore(board, action, aiColor, humanColor, diff) {
+  if (action[0] === "capture") {
+    return deterministicComboRouteScore(board, action, aiColor, humanColor, diff, Math.max(2, diff.depth));
+  }
+
+  if (action[0] === "darkCapture") {
+    const certainRouteScore = bestKnownCaptureRouteScoreFromBoard(board, aiColor, humanColor, diff, Math.max(2, diff.depth));
+    return darkComboAttemptScore(board, action, aiColor, humanColor, diff, certainRouteScore);
+  }
+
+  if (action[0] === "move") {
+    const nextBoard = cloneBoard(board);
+    applyAction(nextBoard, action);
+    return quickActionScore(board, action, aiColor, humanColor, diff)
+      + minimax(nextBoard, Math.max(0, diff.depth - 1), humanColor, aiColor, humanColor, -Infinity, Infinity, false, diff) * 0.55;
+  }
+
+  if (action[0] === "flip") return quickActionScore(board, action, aiColor, humanColor, diff) * 0.85;
+  return quickActionScore(board, action, aiColor, humanColor, diff);
+}
+
+function deterministicComboRouteScore(board, action, aiColor, humanColor, diff, depth) {
+  const immediate = quickActionScore(board, action, aiColor, humanColor, diff);
+  if (action[0] !== "capture" || depth <= 0) return immediate;
+
+  const nextBoard = cloneBoard(board);
+  const result = applyAction(nextBoard, action);
+  if (!result.successCapture || !result.lastMove) return immediate;
+
+  const pos = { r: result.lastMove.r, c: result.lastMove.c };
+  const future = bestComboContinuationScore(nextBoard, aiColor, humanColor, pos, diff, depth - 1);
+  const finalRisk = squareRisk(nextBoard, pos.r, pos.c, aiColor) * diff.riskTaste * 0.72;
+  return immediate + future * 0.9 - finalRisk;
+}
+
+function bestComboContinuationScore(board, aiColor, humanColor, pos, diff, depth) {
+  if (depth <= 0) return 0;
+  const actions = generateCaptureActionsFrom(board, aiColor, pos, { includeDark: true });
+  let best = 0;
+
+  for (const action of actions) {
+    let score;
+    if (action[0] === "capture") {
+      score = deterministicComboRouteScore(board, action, aiColor, humanColor, diff, depth);
+    } else {
+      score = expectedHiddenCaptureScore(board, action, aiColor, humanColor, diff) * 0.38;
+    }
+    if (score > best) best = score;
+  }
+  return best;
+}
+
+function bestKnownCaptureRouteScoreFromBoard(board, aiColor, humanColor, diff, depth) {
+  let best = 0;
+  for (let r = 0; r < ROWS; r += 1) {
+    for (let c = 0; c < COLS; c += 1) {
+      const piece = board[r][c];
+      if (!piece || !piece.faceUp || piece.color !== aiColor) continue;
+      const actions = generateCaptureActionsFrom(board, aiColor, { r, c }, { includeDark: false });
+      for (const action of actions) best = Math.max(best, deterministicComboRouteScore(board, action, aiColor, humanColor, diff, depth));
+    }
+  }
+  return best;
+}
+
+function darkComboAttemptScore(board, action, aiColor, humanColor, diff, certainRouteScore = 0) {
+  const raw = expectedHiddenCaptureScore(board, action, aiColor, humanColor, diff);
+  const opportunityCost = Math.max(0, certainRouteScore) * 0.33;
+  const [, sr, sc] = action;
+  const attacker = board[sr][sc];
+  const dangerCost = attacker ? squareRisk(board, sr, sc, attacker.color) * 0.35 * diff.riskTaste : 0;
+  return raw * 0.58 - opportunityCost - dangerCost;
 }
 
 function minimax(board, depth, currentColor, aiColor, humanColor, alpha, beta, maximizing, diff) {
@@ -816,8 +914,18 @@ function kingNearEnemyPawnPenalty(board, r, c, color, diff = DIFFICULTIES.normal
 function chooseBestComboAction(board, aiColor, humanColor, pos, diff) {
   const actions = generateCaptureActionsFrom(board, aiColor, pos, { includeDark: true });
   let best = null;
+  let knownBest = 0;
+
   for (const action of actions) {
-    const score = quickActionScore(board, action, aiColor, humanColor, diff);
+    if (action[0] === "capture") {
+      knownBest = Math.max(knownBest, deterministicComboRouteScore(board, action, aiColor, humanColor, diff, Math.max(2, diff.depth)));
+    }
+  }
+
+  for (const action of actions) {
+    const score = action[0] === "capture"
+      ? deterministicComboRouteScore(board, action, aiColor, humanColor, diff, Math.max(2, diff.depth))
+      : darkComboAttemptScore(board, action, aiColor, humanColor, diff, knownBest);
     if (!best || score > best.score) best = { action, score };
   }
   return best;
