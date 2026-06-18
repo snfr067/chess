@@ -1,4 +1,4 @@
-const APP_VERSION = "mobile-r15-20260618-topbar-score-fix";
+const APP_VERSION = "mobile-r17-20260618-fixed-stage-no-rotate-events";
 
 const ROWS = 4;
 const COLS = 8;
@@ -904,14 +904,50 @@ function showModal(title, text) { dom.modalTitle.textContent = title; dom.modalT
 function hideModal() { dom.modal.classList.add("hidden"); }
 function sameAction(a, b) { return a.length === b.length && a.every((value, index) => value === b[index]); }
 
+function applyFixedLandscapeStage() {
+  const shell = document.querySelector(".app-shell");
+  if (!shell) return;
+
+  const STAGE_W = 932;
+  const STAGE_H = 430;
+  const vw = window.innerWidth || document.documentElement.clientWidth || STAGE_W;
+  const vh = window.innerHeight || document.documentElement.clientHeight || STAGE_H;
+  const initialPortrait = vw < vh;
+
+  let scale;
+  let left;
+  let top;
+  let transform;
+
+  if (initialPortrait) {
+    scale = Math.min(vw / STAGE_H, vh / STAGE_W);
+    left = (vw + STAGE_H * scale) / 2;
+    top = (vh - STAGE_W * scale) / 2;
+    transform = `rotate(90deg) scale(${scale})`;
+    document.body.classList.add("stage-initial-portrait");
+  } else {
+    scale = Math.min(vw / STAGE_W, vh / STAGE_H);
+    left = (vw - STAGE_W * scale) / 2;
+    top = (vh - STAGE_H * scale) / 2;
+    transform = `scale(${scale})`;
+    document.body.classList.add("stage-initial-landscape");
+  }
+
+  shell.style.setProperty("--stage-left", `${left}px`);
+  shell.style.setProperty("--stage-top", `${top}px`);
+  shell.style.setProperty("--stage-transform", transform);
+  shell.style.setProperty("--stage-scale", String(scale));
+}
+
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=mobile-r15-20260618-topbar-score-fix").catch(() => {});
+    navigator.serviceWorker.register("./service-worker.js?v=mobile-r17-20260618-fixed-stage-no-rotate-events").catch(() => {});
   });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  applyFixedLandscapeStage();
   const versionBadge = document.getElementById("versionBadge");
   if (versionBadge) versionBadge.textContent = `版本：${APP_VERSION}`;
   initDom();

@@ -640,12 +640,6 @@ body {
   transform: none;
 }
 
-@media (max-aspect-ratio: 1/1) {
-  .app-shell {
-    transform: rotate(90deg) translateY(-100%) !important;
-  }
-}
-
 main,
 .view.active,
 .home-view,
@@ -1358,7 +1352,7 @@ h2 { font-size: clamp(26px, 6.7vmin, 46px) !important; }
     font-size: clamp(11px, 3.05vmin, 17px) !important;
   }
 }
-/* ===== safe area fix: avoid iPhone status bar overlap ===== */
+
 
 /* ===== v16: real-phone safe viewport + board fit repair ===== */
 :root {
@@ -1386,19 +1380,6 @@ body.is-game-view .app-shell,
   overflow: hidden !important;
 }
 
-/* 直拿手機但畫面仍強制橫向時：
-   旋轉後，原本 app-shell 的 left padding 會變成實際螢幕最上方留白 */
-@media (max-aspect-ratio: 1/1) {
-  body.is-game-view .app-shell,
-  .app-shell {
-    padding:
-      var(--v16-shell-y)
-      var(--v16-portrait-bottom-guard)
-      var(--v16-shell-y)
-      var(--v16-portrait-top-guard) !important;
-  }
-}
-
 .game-panel,
 .game-panel.v11-layout,
 .game-panel.fixed-landscape-layout {
@@ -1410,7 +1391,7 @@ body.is-game-view .app-shell,
   gap: clamp(5px, .95vmin, 8px) !important;
   overflow: hidden !important;
 }
-/* ===== bottom clipping fix: avoid board being cut by phone bottom edge ===== */
+
 .game-topbar,
 .right-rail .score-strip {
   min-height: 0 !important;
@@ -1443,3 +1424,280 @@ body.is-game-view .app-shell,
 .version-badge {
   display: none !important;
 }
+
+/* ===== v17: fixed landscape stage, no rotation/orientation event layout ===== */
+:root {
+  --fixed-stage-w: 932px;
+  --fixed-stage-h: 430px;
+  --fixed-panel-pad: 10px;
+  --fixed-gap: 8px;
+  --fixed-topbar-h: 48px;
+  --fixed-grave-w: 66px;
+  --fixed-score-w: 286px;
+  --fixed-grave-chip: 25px;
+  --fixed-grave-gap: 2px;
+}
+
+html,
+body {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+  touch-action: manipulation !important;
+  background: #180d07 !important;
+}
+
+body {
+  position: fixed !important;
+  inset: 0 !important;
+}
+
+.app-shell {
+  position: fixed !important;
+  left: var(--stage-left, 0px) !important;
+  top: var(--stage-top, 0px) !important;
+  width: var(--fixed-stage-w) !important;
+  height: var(--fixed-stage-h) !important;
+  min-width: var(--fixed-stage-w) !important;
+  min-height: var(--fixed-stage-h) !important;
+  max-width: var(--fixed-stage-w) !important;
+  max-height: var(--fixed-stage-h) !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  transform: var(--stage-transform, scale(1)) !important;
+  transform-origin: top left !important;
+}
+
+.app-shell main,
+.view.active {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+.view { width: 100% !important; height: 100% !important; }
+
+.hero-card,
+.page-card {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+  border-radius: 22px !important;
+}
+
+.hero-card {
+  display: grid !important;
+  grid-template-columns: 1.15fr .85fr !important;
+  gap: 22px !important;
+  padding: 30px 34px !important;
+}
+
+.hero-card h1 { font-size: 52px !important; }
+.hero-card p { font-size: 17px !important; line-height: 1.45 !important; }
+.home-actions { grid-template-columns: 1fr 1fr !important; }
+
+.settings-card {
+  padding: 24px 30px !important;
+}
+.settings-card h2 { font-size: 42px !important; }
+.setting-block,
+.setting-toggle-block,
+.delay-setting-block { margin-top: 14px !important; }
+
+.game-layout,
+body.is-game-view .game-layout {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+.game-panel,
+.game-panel.v11-layout,
+.game-panel.fixed-landscape-layout {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  display: grid !important;
+  grid-template-columns: var(--fixed-grave-w) minmax(0, 1fr) var(--fixed-score-w) var(--fixed-grave-w) !important;
+  grid-template-rows: var(--fixed-topbar-h) minmax(0, 1fr) !important;
+  grid-template-areas:
+    "topbar topbar score score"
+    "leftgrave board board rightgrave" !important;
+  gap: var(--fixed-gap) !important;
+  padding: var(--fixed-panel-pad) !important;
+  border-radius: 20px !important;
+  overflow: hidden !important;
+}
+
+.left-rail,
+.right-rail {
+  display: contents !important;
+  overflow: visible !important;
+}
+
+.game-topbar {
+  grid-area: topbar !important;
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: stretch !important;
+  justify-content: flex-start !important;
+  gap: 8px !important;
+  width: auto !important;
+  height: var(--fixed-topbar-h) !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  z-index: 10 !important;
+}
+
+.game-topbar .ghost-btn,
+.game-topbar .secondary-btn,
+.game-topbar .primary-btn,
+.game-topbar .compact {
+  height: 100% !important;
+  min-height: 0 !important;
+  min-width: 62px !important;
+  padding: 0 13px !important;
+  border-radius: 14px !important;
+  font-size: 15px !important;
+  white-space: nowrap !important;
+  flex: 0 0 auto !important;
+}
+.game-topbar #endTurnBtn { min-width: 98px !important; }
+
+.right-rail .score-strip {
+  grid-area: score !important;
+  width: 100% !important;
+  height: var(--fixed-topbar-h) !important;
+  min-height: 0 !important;
+  display: grid !important;
+  grid-template-columns: 1fr 50px 1fr !important;
+  align-items: stretch !important;
+  gap: 8px !important;
+  overflow: visible !important;
+}
+
+.right-rail .side-card {
+  height: 100% !important;
+  min-height: 0 !important;
+  padding: 4px 8px !important;
+  border-radius: 15px !important;
+}
+.right-rail .side-card span { font-size: 10px !important; line-height: 1 !important; }
+.right-rail .side-card strong { font-size: 18px !important; line-height: 1.05 !important; white-space: nowrap !important; }
+.right-rail .turn-orb {
+  width: 50px !important;
+  height: 50px !important;
+  font-size: 11px !important;
+  align-self: center !important;
+  justify-self: center !important;
+}
+
+.human-grave { grid-area: leftgrave !important; }
+.ai-grave { grid-area: rightgrave !important; }
+.side-grave {
+  width: var(--fixed-grave-w) !important;
+  height: auto !important;
+  align-self: start !important;
+  justify-self: center !important;
+  display: grid !important;
+  grid-template-rows: 24px auto !important;
+  gap: 4px !important;
+  padding: 5px !important;
+  border-radius: 13px !important;
+  overflow: visible !important;
+}
+.side-grave .graveyard-head {
+  display: grid !important;
+  grid-template-columns: 1fr auto !important;
+  gap: 2px !important;
+  align-items: center !important;
+  margin: 0 !important;
+}
+.side-grave .graveyard-kicker { display: none !important; }
+.side-grave .graveyard-head strong {
+  font-size: 9px !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+}
+.side-grave .captured-count {
+  min-width: 22px !important;
+  width: auto !important;
+  height: 18px !important;
+  padding: 0 3px !important;
+  border-width: 1px !important;
+  font-size: 8px !important;
+  line-height: 1 !important;
+}
+.reserve-grave {
+  width: calc((var(--fixed-grave-chip) * 2) + var(--fixed-grave-gap)) !important;
+  height: calc((var(--fixed-grave-chip) * 8) + (var(--fixed-grave-gap) * 7)) !important;
+  display: grid !important;
+  grid-template-columns: repeat(2, var(--fixed-grave-chip)) !important;
+  grid-template-rows: repeat(8, var(--fixed-grave-chip)) !important;
+  gap: var(--fixed-grave-gap) !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  background: transparent !important;
+}
+.grave-slot,
+.reserve-grave .grave-piece {
+  width: var(--fixed-grave-chip) !important;
+  height: var(--fixed-grave-chip) !important;
+  min-width: var(--fixed-grave-chip) !important;
+  min-height: var(--fixed-grave-chip) !important;
+}
+.reserve-grave .grave-piece {
+  border-width: 2px !important;
+  font-size: 12px !important;
+}
+
+.center-board-zone {
+  grid-area: board !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  overflow: hidden !important;
+}
+.center-board-zone .board-frame {
+  width: 100% !important;
+  height: 100% !important;
+  display: grid !important;
+  place-items: center !important;
+  overflow: hidden !important;
+}
+.center-board-zone .board {
+  height: 100% !important;
+  width: auto !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  aspect-ratio: 2 / 1 !important;
+  gap: 5px !important;
+  padding: 8px !important;
+  border-width: 6px !important;
+  border-radius: 24px !important;
+}
+.center-board-zone .cell { padding: 3px !important; }
+.center-board-zone .piece-btn {
+  font-size: 42px !important;
+  line-height: 1 !important;
+}
+.center-board-zone .hidden-piece { font-size: 40px !important; }
+.visual-only-status,
+.status-box { display: none !important; }
+.version-badge { display: none !important; }
