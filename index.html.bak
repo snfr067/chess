@@ -8,11 +8,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="台灣暗棋">
   <title>台灣暗棋</title>
-  <meta name="app-version" content="mobile-r16-20260618-safe-viewport-boardfit">
+  <meta name="app-version" content="mobile-r15-safearea-fix-001">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./apple-touch-icon.svg">
-  <link rel="stylesheet" href="./style.css?v=mobile-r16-20260618-safe-viewport-boardfit">
+  <link rel="stylesheet" href="./style.css?v=mobile-r15-safearea-fix-001">
 </head>
 <body>
   <div class="app-shell">
@@ -160,6 +160,6 @@
     </div>
   </div>
 
-  <script src="./app.js?v=mobile-r16-20260618-safe-viewport-boardfit"></script>
-  </body>
+  <script src="./app.js?v=mobile-r15-safearea-fix-001"></script>
+</body>
 </html>

@@ -907,7 +907,7 @@ function sameAction(a, b) { return a.length === b.length && a.every((value, inde
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=mobile-r15-20260618-topbar-score-fix").catch(() => {});
+    navigator.serviceWorker.register("./service-worker.js?v=mobile-r15-safearea-fix-001").catch(() => {});
   });
 }
 
