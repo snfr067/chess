@@ -1,4 +1,4 @@
-const APP_VERSION = "mobile-r19-20260716-both-sides-no-perpetual-chase";
+const APP_VERSION = "mobile-r20-20260717-validated-tactical-win-engine";
 
 const ROWS = 4;
 const COLS = 8;
@@ -15,7 +15,7 @@ const DIFFICULTIES = {
   easy: { label: "入門", depth: 1, branchLimit: 10, flipLimit: 6, chanceLimit: 8, thinkMs: 120, riskTaste: 0.90, help: "快速完成基本攻防判斷。" },
   normal: { label: "一般", depth: 3, branchLimit: 18, flipLimit: 10, chanceLimit: 10, thinkMs: 520, riskTaste: 1.00, help: "搜尋完整回合與下一輪反擊。" },
   hard: { label: "困難", depth: 4, branchLimit: 25, flipLimit: 14, chanceLimit: 12, thinkMs: 1200, riskTaste: 1.12, help: "加深勝負搜尋，減少貪吃與送棋。" },
-  master: { label: "強敵", depth: 6, branchLimit: 34, flipLimit: 18, chanceLimit: 14, thinkMs: 2600, riskTaste: 1.22, help: "迭代深化搜尋完整回合、連吃、反擊與勝負。" },
+  master: { label: "強敵", depth: 6, branchLimit: 34, flipLimit: 18, chanceLimit: 14, thinkMs: 700, riskTaste: 1.28, help: "以勝負、完整連吃路線與對手最強反擊為優先。" },
 };
 
 const SEARCH_VALUE = { K: 1200, A: 300, E: 300, R: 680, N: 440, C: 560, P: 210 };
@@ -689,35 +689,126 @@ function cloneCaptured(captured) { return (captured || []).map((piece) => ({ ...
 function findBestAction(board, aiColor, humanColor, diff, options = {}) {
   const captured = cloneCaptured(options.captured || (state ? state.captured : []));
   const comboEnabled = Boolean(options.includeDarkCaptures);
-  const rootActions = prepareSearchActions(board, captured, aiColor, aiColor, humanColor, diff, comboEnabled, null, true);
-  if (rootActions.length === 0) return null;
+  const allActions = generateActions(board, aiColor, {
+    includeFlips: true,
+    includeMoves: true,
+    includeCaptures: true,
+    includeDarkCaptures: comboEnabled,
+  });
 
-  const policyRows = rootActions.map((action) => ({ action, policy: evaluateAiOpeningPolicy(board, action, aiColor, humanColor) }));
-  const candidates = policyRows.filter((row) => !row.policy.forbidden);
-  if (candidates.length === 0) return null;
-
-  let bestAction = candidates[0].action;
+  const comboDepth = Math.min(10, Math.max(5, diff.depth + 3));
+  let bestAction = null;
   let bestScore = -Infinity;
-  let completedDepth = 0;
-  const deadline = nowMs() + diff.thinkMs;
+  let evaluated = 0;
 
-  for (let depth = 1; depth <= diff.depth; depth += 1) {
-    const ctx = createSearchContext(diff, aiColor, humanColor, comboEnabled, deadline);
-    try {
-      const result = searchRootActions(board, captured, candidates, depth, ctx);
-      if (result.action) {
-        bestAction = result.action;
-        bestScore = result.score;
-        completedDepth = depth;
+  for (const action of allActions) {
+    const policy = evaluateAiOpeningPolicy(board, action, aiColor, humanColor);
+    if (policy.forbidden) continue;
+
+    let score = searchActionOrderingScore(board, captured, action, aiColor, aiColor, humanColor, diff);
+
+    if (action[0] === "capture") {
+      const nextBoard = cloneBoard(board);
+      const nextCaptured = cloneCaptured(captured);
+      const result = applyAction(nextBoard, action);
+      if (result.invalid) continue;
+      if (result.captured) nextCaptured.push({ ...result.captured, faceUp: true });
+      const winner = checkSearchWinner(nextCaptured);
+      if (winner === aiColor) return action;
+      if (result.successCapture && result.lastMove) {
+        score += r20BestKnownComboRoute(nextBoard, nextCaptured, aiColor, result.lastMove, comboDepth, new Map()) * 2.65;
       }
-    } catch (error) {
-      if (error !== SEARCH_TIMEOUT) throw error;
-      break;
+      score -= r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor) * 1.25;
+    } else if (action[0] === "move") {
+      const nextBoard = cloneBoard(board);
+      const nextCaptured = cloneCaptured(captured);
+      const result = applyAction(nextBoard, action);
+      if (result.invalid) continue;
+      score -= r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor) * 1.10;
+      score += r20BestImmediateKnownCapture(nextBoard, nextCaptured, aiColor) * 0.20;
+    } else if (action[0] === "flip") {
+      score += r20ExpectedFlipSafety(board, captured, action[1], action[2], aiColor, humanColor, diff);
+    }
+
+    score -= policy.penalty || 0;
+    evaluated += 1;
+    if (score > bestScore) {
+      bestScore = score;
+      bestAction = action;
     }
   }
 
-  if (state) state.aiSearchInfo = { depth: completedDepth, score: bestScore, nodes: null, action: [...bestAction] };
+  if (state && bestAction) state.aiSearchInfo = { depth: 2, score: bestScore, nodes: evaluated, action: [...bestAction] };
   return bestAction;
+}
+
+function r20ExpectedFlipSafety(board, captured, r, c, aiColor, humanColor, diff) {
+  const pool = getUnseenPool(board, captured);
+  if (pool.total <= 0) return 0;
+  const outcomes = getUnseenOutcomes(pool, 14);
+  const before = evaluateBoard(board, captured, aiColor, humanColor, diff);
+  let expected = 0;
+
+  for (const outcome of outcomes) {
+    const nextBoard = cloneBoard(board);
+    const hiddenId = nextBoard[r][c] ? nextBoard[r][c].id : `r20-flip-${r}-${c}`;
+    nextBoard[r][c] = { color: outcome.color, kind: outcome.kind, faceUp: true, id: hiddenId };
+    const after = evaluateBoard(nextBoard, captured, aiColor, humanColor, diff);
+    const opponentHit = r20BestImmediateKnownCapture(nextBoard, captured, humanColor);
+    const ownHit = r20BestImmediateKnownCapture(nextBoard, captured, aiColor);
+    expected += outcome.probability * ((after - before) * 0.75 - opponentHit * 1.80 + ownHit * 0.38);
+  }
+  return expected;
+}
+
+function r20BestKnownComboRoute(board, captured, actorColor, pos, depth, memo) {
+  if (!pos || depth <= 0) return 0;
+  const key = `${visiblePositionKey(board, actorColor)}|${capturedCountKey(captured)}|${pos.r},${pos.c}|${depth}`;
+  if (memo.has(key)) return memo.get(key);
+
+  let best = 0;
+  const actions = generateCaptureActionsFrom(board, actorColor, pos, { includeDark: false });
+  for (const action of actions) {
+    const defender = board[action[3]][action[4]];
+    if (!defender) continue;
+    const nextBoard = cloneBoard(board);
+    const nextCaptured = cloneCaptured(captured);
+    const result = applyAction(nextBoard, action);
+    if (!result.successCapture || !result.lastMove) continue;
+    nextCaptured.push({ ...result.captured, faceUp: true });
+
+    const winner = checkSearchWinner(nextCaptured);
+    if (winner === actorColor) {
+      memo.set(key, SEARCH_MATE / 5);
+      return SEARCH_MATE / 5;
+    }
+
+    const future = r20BestKnownComboRoute(nextBoard, nextCaptured, actorColor, result.lastMove, depth - 1, memo);
+    const finalRisk = maxSquareRisk(nextBoard, result.lastMove.r, result.lastMove.c, actorColor);
+    const score = SEARCH_VALUE[defender.kind] + future * 0.96 - finalRisk * 0.42;
+    if (score > best) best = score;
+  }
+  memo.set(key, best);
+  return best;
+}
+
+function r20BestImmediateKnownCapture(board, captured, actorColor) {
+  let best = 0;
+  const actions = generateActions(board, actorColor, {
+    includeFlips: false,
+    includeMoves: false,
+    includeCaptures: true,
+    includeDarkCaptures: false,
+  });
+  for (const action of actions) {
+    const defender = board[action[3]][action[4]];
+    if (!defender) continue;
+    const nextBoard = cloneBoard(board);
+    const result = applyAction(nextBoard, action);
+    const finalRisk = result.lastMove ? maxSquareRisk(nextBoard, result.lastMove.r, result.lastMove.c, actorColor) : 0;
+    best = Math.max(best, SEARCH_VALUE[defender.kind] * 1.35 - finalRisk * 0.70);
+  }
+  return best;
 }
 
 function createSearchContext(diff, aiColor, humanColor, comboEnabled, deadline) {
@@ -1196,34 +1287,42 @@ function capturedCountKey(captured) {
 }
 
 function chooseBestComboAction(board, aiColor, humanColor, pos, diff) {
-  const actions = prepareSearchActions(board, state ? state.captured : [], aiColor, aiColor, humanColor, diff, true, pos, true);
+  const captured = cloneCaptured(state ? state.captured : []);
+  const actions = generateCaptureActionsFrom(board, aiColor, pos, { includeDark: true });
   if (actions.length === 0) return null;
-  const deadline = nowMs() + Math.max(220, Math.round(diff.thinkMs * 0.55));
-  let bestAction = null;
-  let bestScore = -Infinity;
-  let stopScore = -Infinity;
 
-  for (let depth = 1; depth <= diff.depth; depth += 1) {
-    const ctx = createSearchContext(diff, aiColor, humanColor, true, deadline);
-    try {
-      const captured = cloneCaptured(state ? state.captured : []);
-      stopScore = finishSearchTurn(cloneBoard(board), captured, depth, aiColor, -Infinity, Infinity, ctx);
-      let localBest = null;
-      let localScore = -Infinity;
-      for (const action of actions) {
-        const value = evaluateSearchAction(board, captured, action, depth, aiColor, pos, 1, -Infinity, Infinity, ctx, true);
-        if (value > localScore) { localScore = value; localBest = action; }
-      }
-      bestAction = localBest;
-      bestScore = localScore;
-    } catch (error) {
-      if (error !== SEARCH_TIMEOUT) throw error;
-      break;
+  const comboDepth = Math.min(10, Math.max(5, diff.depth + 3));
+  let bestAction = null;
+  let bestScore = 0;
+
+  for (const action of actions) {
+    let score = searchActionOrderingScore(board, captured, action, aiColor, aiColor, humanColor, diff);
+
+    if (action[0] === "capture") {
+      const nextBoard = cloneBoard(board);
+      const nextCaptured = cloneCaptured(captured);
+      const result = applyAction(nextBoard, action);
+      if (!result.successCapture || !result.lastMove) continue;
+      nextCaptured.push({ ...result.captured, faceUp: true });
+
+      const winner = checkSearchWinner(nextCaptured);
+      if (winner === aiColor) return { action, score: SEARCH_MATE };
+
+      const future = r20BestKnownComboRoute(nextBoard, nextCaptured, aiColor, result.lastMove, comboDepth - 1, new Map());
+      const opponentHit = r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor);
+      const finalRisk = maxSquareRisk(nextBoard, result.lastMove.r, result.lastMove.c, aiColor);
+      score += future * 4.20 - opponentHit * 1.80 - finalRisk * 1.30;
+    } else {
+      score *= 0.88;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestAction = action;
     }
   }
 
-  if (!bestAction || bestScore <= stopScore + 25) return null;
-  return { action: bestAction, score: bestScore };
+  return bestAction ? { action: bestAction, score: bestScore } : null;
 }
 
 function visiblePositionKey(board, nextColor) {
@@ -1559,7 +1658,7 @@ function applyFixedLandscapeStage() {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=mobile-r19-20260716-both-sides-no-perpetual-chase").catch(() => {});
+    navigator.serviceWorker.register("./service-worker.js?v=mobile-r20-20260717-validated-tactical-win-engine").catch(() => {});
   });
 }
 
