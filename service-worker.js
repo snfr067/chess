@@ -28,15 +28,30 @@ self.addEventListener("fetch", (event) => {
   const isNavigation = request.mode === "navigate" || accept.includes("text/html");
 
   if (isNavigation) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1500);
+  
     event.respondWith(
-      fetch(request, { cache: "no-store" })
+      fetch(request, {
+        cache: "no-store",
+        signal: controller.signal
+      })
         .then((response) => {
+          clearTimeout(timeoutId);
+  
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy));
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put("./index.html", copy);
+          });
+  
           return response;
         })
-        .catch(() => caches.match("./index.html"))
+        .catch(() => {
+          clearTimeout(timeoutId);
+          return caches.match("./index.html");
+        })
     );
+  
     return;
   }
 
