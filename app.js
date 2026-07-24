@@ -1,4 +1,4 @@
-const APP_VERSION = "mobile-r21-20260723-omniscient-master";
+const APP_VERSION = "mobile-r22-20260723-fair-first-player-validated";
 
 const ROWS = 4;
 const COLS = 8;
@@ -15,7 +15,7 @@ const DIFFICULTIES = {
   easy: { label: "入門", depth: 1, branchLimit: 10, flipLimit: 6, chanceLimit: 8, thinkMs: 120, riskTaste: 0.90, help: "快速完成基本攻防判斷。" },
   normal: { label: "一般", depth: 3, branchLimit: 18, flipLimit: 10, chanceLimit: 10, thinkMs: 520, riskTaste: 1.00, help: "搜尋完整回合與下一輪反擊。" },
   hard: { label: "困難", depth: 4, branchLimit: 25, flipLimit: 14, chanceLimit: 12, thinkMs: 1200, riskTaste: 1.12, help: "加深勝負搜尋，減少貪吃與送棋。" },
-  master: { label: "全知強敵", depth: 6, branchLimit: 34, flipLimit: 18, chanceLimit: 14, thinkMs: 700, riskTaste: 1.28, help: "最高難度會掌握暗棋配置，以勝利為唯一目標。" },
+  master: { label: "強敵", depth: 6, branchLimit: 34, flipLimit: 18, chanceLimit: 14, thinkMs: 700, riskTaste: 1.28, help: "公平資訊搜尋；AI 先手，完整評估連吃、反擊與終局。" },
 };
 
 const SEARCH_VALUE = { K: 1200, A: 300, E: 300, R: 680, N: 440, C: 560, P: 210 };
@@ -60,11 +60,11 @@ function initDom() {
 }
 
 function bindEvents() {
-  dom.startGameBtn.addEventListener("click", () => { newGame(); showView("game"); });
+  dom.startGameBtn.addEventListener("click", () => { newGame(true); showView("game"); });
   dom.openSettingsBtn.addEventListener("click", () => { syncSettingsUI(); showView("settings"); });
   dom.settingsBackBtn.addEventListener("click", () => showView("home"));
   dom.gameBackBtn.addEventListener("click", () => { hideModal(); showView("home"); });
-  dom.newGameBtn.addEventListener("click", () => newGame());
+  dom.newGameBtn.addEventListener("click", () => newGame(true));
   dom.endTurnBtn.addEventListener("click", () => {
     if (!state || !state.combo.active || state.currentPlayer !== HUMAN || state.aiThinking || state.locked) return;
     state.combo = { active: false, r: null, c: null };
@@ -75,7 +75,7 @@ function bindEvents() {
   dom.comboRuleCheckbox.addEventListener("change", () => { saveComboRule(dom.comboRuleCheckbox.checked); syncSettingsUI(); });
   dom.aiDelayRange.addEventListener("input", () => { saveAiDelaySeconds(dom.aiDelayRange.value); syncSettingsUI(); });
   dom.modalHomeBtn.addEventListener("click", () => { hideModal(); showView("home"); });
-  dom.modalRestartBtn.addEventListener("click", () => { hideModal(); newGame(); showView("game"); });
+  dom.modalRestartBtn.addEventListener("click", () => { hideModal(); newGame(true); showView("game"); });
 }
 
 function showView(name) {
@@ -114,7 +114,7 @@ function createBoardButtons() {
   }
 }
 
-function newGame() {
+function newGame(autoStart = false) {
   aiRunId += 1;
   const pieces = [];
   let id = 1;
@@ -132,8 +132,8 @@ function newGame() {
     selected: null,
     turnColor: null,
     playerColor: { [HUMAN]: null, [AI]: null },
-    currentPlayer: HUMAN,
-    aiThinking: false,
+    currentPlayer: AI,
+    aiThinking: autoStart,
     locked: false,
     captured: [],
     lastMove: null,
@@ -149,7 +149,52 @@ function newGame() {
     positionCounts: Object.create(null),
     aiSearchInfo: null,
   };
-  setStatus("請先翻一顆棋。", "");
+  setStatus(autoStart ? "AI 先手翻棋" : "準備開始", "");
+  render();
+  if (autoStart) window.setTimeout(aiOpeningMove, 40);
+}
+
+
+function chooseAiOpeningFlipAction(board) {
+  // 固定中央偏左位置；判斷只使用座標與是否為暗棋，不讀取棋種或顏色。
+  const preferred = { r: 1, c: 3 };
+  if (board[preferred.r] && board[preferred.r][preferred.c] && !board[preferred.r][preferred.c].faceUp) {
+    return ["flip", preferred.r, preferred.c];
+  }
+  const candidates = [];
+  for (let r = 0; r < ROWS; r += 1) for (let c = 0; c < COLS; c += 1) {
+    const piece = board[r][c];
+    if (!piece || piece.faceUp) continue;
+    candidates.push({ action: ["flip", r, c], score: -centerDistance(r, c) * 10 + neighbors(r, c).length });
+  }
+  candidates.sort((a, b) => b.score - a.score || a.action.join("-").localeCompare(b.action.join("-")));
+  return candidates.length ? candidates[0].action : null;
+}
+
+async function aiOpeningMove() {
+  if (!state || !state.aiThinking || state.currentPlayer !== AI || state.turnColor !== null) return;
+  const runId = aiRunId;
+  const action = chooseAiOpeningFlipAction(state.board);
+  if (!action) {
+    state.aiThinking = false;
+    state.locked = true;
+    render();
+    showModal("遊戲結束", "沒有可翻開的棋子。");
+    return;
+  }
+  const result = await performVisibleAction(action, AI, { runId, opening: true });
+  if (!isAiRunActive(runId) || result.invalid) return;
+  const revealed = state.board[action[1]][action[2]];
+  if (!revealed || !revealed.faceUp) return;
+  state.playerColor[AI] = revealed.color;
+  state.playerColor[HUMAN] = opponentColor(revealed.color);
+  finalizeTurnHistory(AI, state.playerColor[HUMAN]);
+  state.currentPlayer = HUMAN;
+  state.turnColor = state.playerColor[HUMAN];
+  state.aiThinking = false;
+  state.selected = null;
+  state.combo = { active: false, r: null, c: null };
+  setStatus("輪到您", "");
   render();
 }
 
@@ -686,74 +731,83 @@ function hasCaptureOpportunityFrom(board, color, src, options = {}) { return gen
 function generateNonFlipActions(board, color) { return generateActions(board, color, { includeFlips: false, includeMoves: true, includeCaptures: true, includeDarkCaptures: false }); }
 function cloneCaptured(captured) { return (captured || []).map((piece) => ({ ...piece, faceUp: true })); }
 
-function r21MasterUsesOmniscience(diff) {
-  return Boolean(diff && diff.depth >= DIFFICULTIES.master.depth);
-}
-
-function r21OmniscientActionScore(board, captured, action, aiColor, humanColor, diff) {
-  const nextBoard = cloneBoard(board);
-  const nextCaptured = cloneCaptured(captured);
-  const result = applyAction(nextBoard, action);
-  if (result.invalid) return -Infinity;
-  if (result.captured) nextCaptured.push({ ...result.captured, faceUp: true });
-
-  const winner = checkWinner(nextBoard);
-  if (winner === aiColor) return SEARCH_MATE;
-  if (winner === humanColor) return -SEARCH_MATE;
-
-  let score = evaluateBoard(nextBoard, nextCaptured, aiColor, humanColor, diff);
-  if (result.successCapture && result.lastMove) {
-    score += r20BestKnownComboRoute(nextBoard, nextCaptured, aiColor, result.lastMove, 9, new Map()) * 4.0;
-  }
-  score -= r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor) * 2.0;
-  score += r20BestImmediateKnownCapture(nextBoard, nextCaptured, aiColor) * 0.45;
-
-  if (action[0] === "flip") {
-    const piece = nextBoard[action[1]][action[2]];
-    if (piece) score += (piece.color === aiColor ? SEARCH_VALUE[piece.kind] : -SEARCH_VALUE[piece.kind]) * 1.5;
-  }
-  if (action[0] === "darkCapture" && !result.successCapture) score -= 280;
-  return score;
-}
-
-function r21FairActionScore(board, captured, action, aiColor, humanColor, diff) {
-  let score = searchActionOrderingScore(board, captured, action, aiColor, aiColor, humanColor, diff);
-  if (action[0] === "capture") {
-    const nextBoard = cloneBoard(board);
-    const nextCaptured = cloneCaptured(captured);
-    const result = applyAction(nextBoard, action);
-    if (result.captured) nextCaptured.push({ ...result.captured, faceUp: true });
-    if (result.successCapture && result.lastMove) {
-      score += r20BestKnownComboRoute(nextBoard, nextCaptured, aiColor, result.lastMove, Math.max(2, diff.depth), new Map()) * 2.65;
-    }
-    score -= r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor) * 1.25;
-  } else if (action[0] === "move") {
-    const nextBoard = cloneBoard(board);
-    const nextCaptured = cloneCaptured(captured);
-    applyAction(nextBoard, action);
-    score -= r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor) * 1.10;
-    score += r20BestImmediateKnownCapture(nextBoard, nextCaptured, aiColor) * 0.20;
-  } else if (action[0] === "flip") {
-    score *= 0.85;
-  }
-  return score;
-}
-
 function findBestAction(board, aiColor, humanColor, diff, options = {}) {
   const captured = cloneCaptured(options.captured || (state ? state.captured : []));
-  const actions = generateAllowedOpeningActions(board, AI, aiColor);
-  if (actions.length === 0) return null;
+  const comboEnabled = Boolean(options.includeDarkCaptures);
+  const publicBoard = r22MaskHiddenBoard(board);
+  const fallback = r22FallbackBestAction(publicBoard, aiColor, humanColor, diff, { ...options, captured });
+  const hiddenCount = r22HiddenCount(publicBoard);
+  if (hiddenCount > 2) return fallback;
+  const actions = prepareSearchActions(publicBoard, captured, aiColor, aiColor, humanColor, { ...diff, branchLimit: 20, flipLimit: hiddenCount === 0 ? 0 : 2, chanceLimit: 14 }, comboEnabled, null, true);
+  const rows = actions.map((action)=>({action,policy:evaluateAiOpeningPolicy(publicBoard,action,aiColor,humanColor)})).filter((row)=>!row.policy.forbidden);
+  if (!rows.length) return fallback;
+  const ctx=createSearchContext({ ...diff, branchLimit:20, flipLimit:hiddenCount === 0 ? 0 : 2, chanceLimit:14 },aiColor,humanColor,comboEnabled,nowMs()+240);
+  ctx.nodeBudget=hiddenCount === 0 ? 2600 : 1600;
+  let best=fallback,score=-Infinity,completed=0;
+  const maxDepth = hiddenCount === 0 ? 5 : 3;
+  for(let depth=1;depth<=maxDepth;depth+=1){
+    try{const result=searchRootActions(publicBoard,captured,rows,depth,ctx);if(result.action){best=result.action;score=result.score;completed=depth;if(score>=SEARCH_MATE/2)break;}}
+    catch(error){if(error!==SEARCH_TIMEOUT)throw error;break;}
+    if(ctx.nodes>=ctx.nodeBudget)break;
+  }
+  if(state&&best)state.aiSearchInfo={depth:completed,score,nodes:ctx.nodes,action:[...best],fairInformation:true,perfectEndgame:true};
+  return best;
+}
+function r22MaskHiddenBoard(board){return board.map((row,r)=>row.map((piece,c)=>!piece?null:piece.faceUp?{...piece}:{color:'red',kind:'P',faceUp:false,id:`hidden-${r}-${c}`}));}
+function r22HiddenCount(board){let n=0;for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(board[r][c]&&!board[r][c].faceUp)n++;return n;}
+function r22FallbackBestAction(board, aiColor, humanColor, diff, options = {}) {
+  const captured = cloneCaptured(options.captured || (state ? state.captured : []));
+  const comboEnabled = Boolean(options.includeDarkCaptures);
+  const allActions = generateActions(board, aiColor, {
+    includeFlips: true,
+    includeMoves: true,
+    includeCaptures: true,
+    includeDarkCaptures: comboEnabled,
+  });
 
-  const omniscient = r21MasterUsesOmniscience(diff);
+  const comboDepth = Math.min(10, Math.max(5, diff.depth + 3));
   let bestAction = null;
   let bestScore = -Infinity;
-  for (const action of actions) {
-    const score = omniscient
-      ? r21OmniscientActionScore(board, captured, action, aiColor, humanColor, diff)
-      : r21FairActionScore(board, captured, action, aiColor, humanColor, diff);
-    if (score > bestScore) { bestScore = score; bestAction = action; }
+  let evaluated = 0;
+
+  for (const action of allActions) {
+    const policy = evaluateAiOpeningPolicy(board, action, aiColor, humanColor);
+    if (policy.forbidden) continue;
+
+    let score = searchActionOrderingScore(board, captured, action, aiColor, aiColor, humanColor, diff);
+
+    if (action[0] === "capture") {
+      const nextBoard = cloneBoard(board);
+      const nextCaptured = cloneCaptured(captured);
+      const result = applyAction(nextBoard, action);
+      if (result.invalid) continue;
+      if (result.captured) nextCaptured.push({ ...result.captured, faceUp: true });
+      const winner = checkSearchWinner(nextCaptured);
+      if (winner === aiColor) return action;
+      if (result.successCapture && result.lastMove) {
+        score += r20BestKnownComboRoute(nextBoard, nextCaptured, aiColor, result.lastMove, comboDepth, new Map()) * 3.00;
+      }
+      score -= r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor) * 1.90;
+    } else if (action[0] === "move") {
+      const nextBoard = cloneBoard(board);
+      const nextCaptured = cloneCaptured(captured);
+      const result = applyAction(nextBoard, action);
+      if (result.invalid) continue;
+      score -= r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor) * 1.80;
+      score += r20BestImmediateKnownCapture(nextBoard, nextCaptured, aiColor) * 0.40;
+    } else if (action[0] === "flip") {
+      score += r20ExpectedFlipSafety(board, captured, action[1], action[2], aiColor, humanColor, diff);
+    }
+
+    score -= policy.penalty || 0;
+    evaluated += 1;
+    if (score > bestScore) {
+      bestScore = score;
+      bestAction = action;
+    }
   }
-  if (state && bestAction) state.aiSearchInfo = { depth: omniscient ? 9 : 2, score: bestScore, nodes: actions.length, action: [...bestAction], omniscient };
+
+  if (state && bestAction) state.aiSearchInfo = { depth: 2, score: bestScore, nodes: evaluated, action: [...bestAction] };
   return bestAction;
 }
 
@@ -848,6 +902,7 @@ function nowMs() { return typeof performance !== "undefined" && performance.now 
 
 function touchSearchNode(ctx) {
   ctx.nodes += 1;
+  if (ctx.nodeBudget && ctx.nodes >= ctx.nodeBudget) throw SEARCH_TIMEOUT;
   if ((ctx.nodes & 127) === 0 && nowMs() >= ctx.deadline) throw SEARCH_TIMEOUT;
 }
 
@@ -1303,17 +1358,41 @@ function capturedCountKey(captured) {
 
 function chooseBestComboAction(board, aiColor, humanColor, pos, diff) {
   const captured = cloneCaptured(state ? state.captured : []);
-  const actions = generateCaptureActionsFrom(board, aiColor, pos, { includeDark: true });
+  const publicBoard = r22MaskHiddenBoard(board);
+  const actions = generateCaptureActionsFrom(publicBoard, aiColor, pos, { includeDark: true });
   if (actions.length === 0) return null;
-  const omniscient = r21MasterUsesOmniscience(diff);
+
+  const comboDepth = Math.min(10, Math.max(5, diff.depth + 3));
   let bestAction = null;
-  let bestScore = omniscient ? 0 : 40;
+  let bestScore = 25;
+
   for (const action of actions) {
-    const score = omniscient
-      ? r21OmniscientActionScore(board, captured, action, aiColor, humanColor, diff)
-      : r21FairActionScore(board, captured, action, aiColor, humanColor, diff);
-    if (score > bestScore) { bestScore = score; bestAction = action; }
+    let score = searchActionOrderingScore(publicBoard, captured, action, aiColor, aiColor, humanColor, diff);
+
+    if (action[0] === "capture") {
+      const nextBoard = cloneBoard(publicBoard);
+      const nextCaptured = cloneCaptured(captured);
+      const result = applyAction(nextBoard, action);
+      if (!result.successCapture || !result.lastMove) continue;
+      nextCaptured.push({ ...result.captured, faceUp: true });
+
+      const winner = checkSearchWinner(nextCaptured);
+      if (winner === aiColor) return { action, score: SEARCH_MATE };
+
+      const future = r20BestKnownComboRoute(nextBoard, nextCaptured, aiColor, result.lastMove, comboDepth - 1, new Map());
+      const opponentHit = r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor);
+      const finalRisk = maxSquareRisk(nextBoard, result.lastMove.r, result.lastMove.c, aiColor);
+      score += future * 4.40 - opponentHit * 2.60 - finalRisk * 2.10;
+    } else {
+      score *= 0.88;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestAction = action;
+    }
   }
+
   return bestAction ? { action: bestAction, score: bestScore } : null;
 }
 
@@ -1650,7 +1729,7 @@ function applyFixedLandscapeStage() {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=mobile-r21-20260723-omniscient-master").catch(() => {});
+    navigator.serviceWorker.register("./service-worker.js?v=mobile-r22-20260723-fair-first-player-validated").catch(() => {});
   });
 }
 
@@ -1662,7 +1741,255 @@ document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   syncSettingsUI();
   createBoardButtons();
-  newGame();
+  newGame(false);
   showView("home");
   registerServiceWorker();
 });
+/* R24: fair-information complete-turn reply search. */
+const R24_ROOT_NODE_BUDGET = 5200;
+const R24_COMBO_NODE_BUDGET = 2200;
+const R24_ROOT_FLIPS = 6;
+const R24_INNER_FLIPS = 3;
+const R24_MOVES = 7;
+const R24_DARK = 4;
+const R24_OUTCOMES = 14;
+const R24_REPLY_PLIES = 1;
+
+function r24Mask(board) {
+  return board.map((row, r) => row.map((piece, c) => {
+    if (!piece) return null;
+    if (piece.faceUp) return { ...piece };
+    return { color: 'red', kind: 'P', faceUp: false, id: `hidden-${r}-${c}` };
+  }));
+}
+
+function r24Ctx(aiColor, humanColor, diff, comboEnabled, budget) {
+  return { aiColor, humanColor, diff, comboEnabled, budget, nodes: 0, memo: new Map() };
+}
+function r24Node(ctx) { ctx.nodes += 1; if (ctx.nodes > ctx.budget) throw SEARCH_TIMEOUT; }
+
+function r24Eval(board, captured, ctx) {
+  const winner = checkSearchWinner(captured);
+  if (winner === ctx.aiColor) return SEARCH_MATE;
+  if (winner === ctx.humanColor) return -SEARCH_MATE;
+  const remaining = remainingPieceCounts(captured);
+  let score = 0;
+  for (const kind of Object.keys(PIECE_COUNTS)) {
+    score += (remaining[ctx.aiColor][kind] - remaining[ctx.humanColor][kind]) * SEARCH_VALUE[kind];
+  }
+  let aiRisk = 0, humanRisk = 0, aiThreat = 0, humanThreat = 0, aiSpace = 0, humanSpace = 0;
+  for (let r = 0; r < ROWS; r += 1) for (let c = 0; c < COLS; c += 1) {
+    const piece = board[r][c];
+    if (!piece || !piece.faceUp) continue;
+    const risk = maxSquareRisk(board, r, c, piece.color);
+    const threat = maxThreatValueFrom(board, r, c, piece.color);
+    const space = neighbors(r, c).filter((pos) => board[pos.r][pos.c] === null).length;
+    if (piece.color === ctx.aiColor) { aiRisk += risk; aiThreat += threat; aiSpace += space; }
+    else { humanRisk += risk; humanThreat += threat; humanSpace += space; }
+  }
+  score += (humanRisk - aiRisk) * 0.95 * ctx.diff.riskTaste;
+  score += (aiThreat - humanThreat) * 0.75;
+  score += (aiSpace - humanSpace) * 12;
+  return score;
+}
+
+function r24Order(board, captured, action, actor, ctx) {
+  const base = searchActionOrderingScore(board, captured, action, actor, ctx.aiColor, ctx.humanColor, ctx.diff);
+  if (action[0] === 'capture') {
+    const next = cloneBoard(board);
+    const result = applyAction(next, action);
+    if (result.invalid) return -Infinity;
+    const risk = result.lastMove ? maxSquareRisk(next, result.lastMove.r, result.lastMove.c, actor) : 0;
+    const reply = r20BestImmediateKnownCapture(next, captured, opponentColor(actor));
+    return base - risk * 2.2 - reply * 1.1;
+  }
+  if (action[0] === 'move') {
+    const next = cloneBoard(board);
+    const result = applyAction(next, action);
+    if (result.invalid) return -Infinity;
+    const reply = r20BestImmediateKnownCapture(next, captured, opponentColor(actor));
+    return base - reply * 1.45;
+  }
+  if (action[0] === 'darkCapture') return base * 0.72;
+  return base;
+}
+
+function r24Actions(board, captured, actor, ctx, comboPos = null, root = false) {
+  let actions;
+  if (comboPos) {
+    actions = generateCaptureActionsFrom(board, actor, comboPos, { includeDark: ctx.comboEnabled });
+  } else {
+    actions = generateActions(board, actor, {
+      includeFlips: true,
+      includeMoves: true,
+      includeCaptures: true,
+      includeDarkCaptures: ctx.comboEnabled,
+    });
+  }
+  const rows = actions.map((action) => ({ action, score: r24Order(board, captured, action, actor, ctx) }));
+  rows.sort((a, b) => b.score - a.score || a.action.join('-').localeCompare(b.action.join('-')));
+  if (comboPos) {
+    const known = rows.filter((row) => row.action[0] === 'capture');
+    const dark = rows.filter((row) => row.action[0] === 'darkCapture').slice(0, R24_DARK);
+    return [...known, ...dark].slice(0, 12).map((row) => row.action);
+  }
+  const captures = rows.filter((row) => row.action[0] === 'capture');
+  const dark = rows.filter((row) => row.action[0] === 'darkCapture').slice(0, R24_DARK);
+  const moves = rows.filter((row) => row.action[0] === 'move').slice(0, R24_MOVES);
+  const flips = rows.filter((row) => row.action[0] === 'flip').slice(0, root ? R24_ROOT_FLIPS : R24_INNER_FLIPS);
+  const merged = [...captures, ...dark, ...moves, ...flips].sort((a, b) => b.score - a.score);
+  const unique = [];
+  for (const row of merged) if (!unique.some((a) => sameAction(a, row.action))) unique.push(row.action);
+  return unique.slice(0, root ? 22 : 14);
+}
+
+function r24TurnValue(board, captured, actor, plies, ctx) {
+  r24Node(ctx);
+  const winner = checkSearchWinner(captured);
+  if (winner) return winner === ctx.aiColor ? SEARCH_MATE : -SEARCH_MATE;
+  if (plies < 0) return r24Eval(board, captured, ctx);
+  const actions = r24Actions(board, captured, actor, ctx, null, false);
+  if (!actions.length) return actor === ctx.aiColor ? -SEARCH_MATE : SEARCH_MATE;
+  const maximizing = actor === ctx.aiColor;
+  let best = maximizing ? -Infinity : Infinity;
+  for (const action of actions) {
+    const value = r24ActionValue(board, captured, action, actor, plies, ctx, null, 0);
+    if (maximizing) best = Math.max(best, value); else best = Math.min(best, value);
+  }
+  return best;
+}
+
+function r24AfterTurn(board, captured, actor, plies, ctx) {
+  if (plies <= 0) return r24Eval(board, captured, ctx);
+  return r24TurnValue(board, captured, opponentColor(actor), plies - 1, ctx);
+}
+
+function r24ComboValue(board, captured, actor, pos, plies, ctx, comboSteps) {
+  r24Node(ctx);
+  const maximizing = actor === ctx.aiColor;
+  let best = r24AfterTurn(board, captured, actor, plies, ctx); // voluntary stop
+  if (comboSteps >= MAX_COMBO_STEPS) return best;
+  const actions = r24Actions(board, captured, actor, ctx, pos, false);
+  for (const action of actions) {
+    const value = r24ActionValue(board, captured, action, actor, plies, ctx, pos, comboSteps);
+    if (maximizing) best = Math.max(best, value); else best = Math.min(best, value);
+  }
+  return best;
+}
+
+function r24ActionValue(board, captured, action, actor, plies, ctx, comboPos, comboSteps) {
+  r24Node(ctx);
+  if (action[0] === 'flip') return r24FlipValue(board, captured, action, actor, plies, ctx);
+  if (action[0] === 'darkCapture') return r24DarkValue(board, captured, action, actor, plies, ctx, comboSteps);
+  const nextBoard = cloneBoard(board);
+  const nextCaptured = cloneCaptured(captured);
+  const result = applyAction(nextBoard, action);
+  if (result.invalid) return actor === ctx.aiColor ? -SEARCH_FORBIDDEN : SEARCH_FORBIDDEN;
+  if (result.captured) nextCaptured.push({ ...result.captured, faceUp: true });
+  const winner = checkSearchWinner(nextCaptured);
+  if (winner) return winner === ctx.aiColor ? SEARCH_MATE : -SEARCH_MATE;
+  if (action[0] === 'capture' && result.successCapture && ctx.comboEnabled && result.lastMove) {
+    return r24ComboValue(nextBoard, nextCaptured, actor, result.lastMove, plies, ctx, comboSteps + 1);
+  }
+  return r24AfterTurn(nextBoard, nextCaptured, actor, plies, ctx);
+}
+
+function r24FlipValue(board, captured, action, actor, plies, ctx) {
+  const [, r, c] = action;
+  const pool = getUnseenPool(board, captured);
+  if (pool.total <= 0) return actor === ctx.aiColor ? -SEARCH_FORBIDDEN : SEARCH_FORBIDDEN;
+  const outcomes = getUnseenOutcomes(pool, R24_OUTCOMES);
+  let expected = 0;
+  let worst = actor === ctx.aiColor ? Infinity : -Infinity;
+  for (const outcome of outcomes) {
+    const nextBoard = cloneBoard(board);
+    nextBoard[r][c] = { color: outcome.color, kind: outcome.kind, faceUp: true, id: `belief-${r}-${c}-${outcome.color}-${outcome.kind}` };
+    const value = r24AfterTurn(nextBoard, captured, actor, plies, ctx);
+    expected += outcome.probability * value;
+    if (actor === ctx.aiColor) worst = Math.min(worst, value); else worst = Math.max(worst, value);
+  }
+  const bias = strategicFlipBias(board, captured, r, c, actor, ctx.diff);
+  const riskAdjusted = expected * 0.86 + worst * 0.14;
+  return riskAdjusted + (actor === ctx.aiColor ? bias : -bias);
+}
+
+function r24DarkValue(board, captured, action, actor, plies, ctx, comboSteps) {
+  const [, sr, sc, dr, dc] = action;
+  if (!canAttemptHiddenCapturePath(board, { r: sr, c: sc }, { r: dr, c: dc })) {
+    return actor === ctx.aiColor ? -SEARCH_FORBIDDEN : SEARCH_FORBIDDEN;
+  }
+  const pool = getUnseenPool(board, captured);
+  if (pool.total <= 0) return actor === ctx.aiColor ? -SEARCH_FORBIDDEN : SEARCH_FORBIDDEN;
+  const outcomes = getUnseenOutcomes(pool, R24_OUTCOMES);
+  let expected = 0;
+  let successProbability = 0;
+  for (const outcome of outcomes) {
+    const nextBoard = cloneBoard(board);
+    const nextCaptured = cloneCaptured(captured);
+    const defender = { color: outcome.color, kind: outcome.kind, faceUp: true, id: `belief-${dr}-${dc}-${outcome.color}-${outcome.kind}` };
+    nextBoard[dr][dc] = defender;
+    let value;
+    if (canCapture(nextBoard, { r: sr, c: sc }, { r: dr, c: dc })) {
+      successProbability += outcome.probability;
+      nextBoard[dr][dc] = nextBoard[sr][sc];
+      nextBoard[sr][sc] = null;
+      nextCaptured.push(defender);
+      const winner = checkSearchWinner(nextCaptured);
+      if (winner) value = winner === ctx.aiColor ? SEARCH_MATE : -SEARCH_MATE;
+      else if (ctx.comboEnabled) value = r24ComboValue(nextBoard, nextCaptured, actor, { r: dr, c: dc }, plies, ctx, comboSteps + 1);
+      else value = r24AfterTurn(nextBoard, nextCaptured, actor, plies, ctx);
+    } else {
+      value = r24AfterTurn(nextBoard, nextCaptured, actor, plies, ctx);
+    }
+    expected += outcome.probability * value;
+  }
+  // Blind attempts with weak success probability are strategically inferior to preserving tempo.
+  const tempoPenalty = Math.max(0, 0.42 - successProbability) * 2400;
+  return actor === ctx.aiColor ? expected - tempoPenalty : expected + tempoPenalty;
+}
+
+function findBestAction(board, aiColor, humanColor, diff, options = {}) {
+  const publicBoard = r24Mask(board);
+  const captured = cloneCaptured(options.captured || (state ? state.captured : []));
+  const comboEnabled = Boolean(options.includeDarkCaptures);
+  const ctx = r24Ctx(aiColor, humanColor, diff, comboEnabled, R24_ROOT_NODE_BUDGET);
+  const actions = r24Actions(publicBoard, captured, aiColor, ctx, null, true)
+    .filter((action) => !evaluateAiOpeningPolicy(publicBoard, action, aiColor, humanColor).forbidden);
+  const fallback = r22FallbackBestAction(publicBoard, aiColor, humanColor, diff, { ...options, captured });
+  let bestAction = fallback || actions[0] || null;
+  let bestScore = -Infinity;
+  try {
+    for (const action of actions) {
+      const policy = evaluateAiOpeningPolicy(publicBoard, action, aiColor, humanColor);
+      const value = r24ActionValue(publicBoard, captured, action, aiColor, R24_REPLY_PLIES, ctx, null, 0) - (policy.penalty || 0);
+      if (value > bestScore) { bestScore = value; bestAction = action; }
+      if (bestScore >= SEARCH_MATE / 2) break;
+    }
+  } catch (error) {
+    if (error !== SEARCH_TIMEOUT) throw error;
+  }
+  if (state && bestAction) state.aiSearchInfo = { engine: 'R24 fair complete-turn reply', depth: 2, score: bestScore, nodes: ctx.nodes, action: [...bestAction], fairInformation: true };
+  return bestAction;
+}
+
+function chooseBestComboAction(board, aiColor, humanColor, pos, diff) {
+  const publicBoard = r24Mask(board);
+  const captured = cloneCaptured(state ? state.captured : []);
+  const ctx = r24Ctx(aiColor, humanColor, diff, true, R24_COMBO_NODE_BUDGET);
+  const actions = r24Actions(publicBoard, captured, aiColor, ctx, pos, true);
+  if (!actions.length) return null;
+  let stopValue;
+  try { stopValue = r24AfterTurn(publicBoard, captured, aiColor, 1, ctx); }
+  catch (error) { if (error !== SEARCH_TIMEOUT) throw error; stopValue = r24Eval(publicBoard, captured, ctx); }
+  let bestAction = null;
+  let bestScore = stopValue;
+  try {
+    for (const action of actions) {
+      const value = r24ActionValue(publicBoard, captured, action, aiColor, 1, ctx, pos, 1);
+      if (value > bestScore) { bestScore = value; bestAction = action; }
+    }
+  } catch (error) {
+    if (error !== SEARCH_TIMEOUT) throw error;
+  }
+  return bestAction ? { action: bestAction, score: bestScore } : null;
+}
