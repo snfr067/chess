@@ -1,4 +1,4 @@
-const APP_VERSION = "mobile-r20-20260717-validated-tactical-win-engine";
+const APP_VERSION = "mobile-r21-20260728-ismcts-alpha-beta";
 
 const ROWS = 4;
 const COLS = 8;
@@ -12,13 +12,49 @@ const BLACK_NAMES = { K: "將", A: "士", E: "象", R: "車", N: "馬", C: "包"
 const PIECE_COUNTS = { K: 1, A: 2, E: 2, R: 2, N: 2, C: 2, P: 5 };
 
 const DIFFICULTIES = {
-  easy: { label: "入門", depth: 1, branchLimit: 10, flipLimit: 6, chanceLimit: 8, thinkMs: 120, riskTaste: 0.90, help: "快速完成基本攻防判斷。" },
-  normal: { label: "一般", depth: 3, branchLimit: 18, flipLimit: 10, chanceLimit: 10, thinkMs: 520, riskTaste: 1.00, help: "搜尋完整回合與下一輪反擊。" },
-  hard: { label: "困難", depth: 4, branchLimit: 25, flipLimit: 14, chanceLimit: 12, thinkMs: 1200, riskTaste: 1.12, help: "加深勝負搜尋，減少貪吃與送棋。" },
-  master: { label: "強敵", depth: 6, branchLimit: 34, flipLimit: 18, chanceLimit: 14, thinkMs: 700, riskTaste: 1.28, help: "以勝負、完整連吃路線與對手最強反擊為優先。" },
+  easy: {
+    label: "入門", thinkMs: 200, comboThinkMs: 90, maxTurns: 2,
+    rootLimit: 10, nodeActionLimit: 8, progressiveBase: 3, progressiveScale: 1.20,
+    exploration: 1.40, minIterations: 12, leafTacticalDepth: 1, finalTacticalDepth: 2,
+    tacticalBranchLimit: 4, maxTacticalExtensions: 4, finalVerifyCount: 1,
+    finalTacticalWeight: 0.08, confidencePenalty: 0.04, hiddenRiskWeight: 0.08,
+    kingSafetyWeight: 0.75, earlyStopVisits: 260, earlyStopMinChildVisits: 10,
+    earlyStopMargin: 1.80,
+    help: "快速搜尋安全吃子、基本反吃與短連吃。",
+  },
+  normal: {
+    label: "一般", thinkMs: 600, comboThinkMs: 180, maxTurns: 3,
+    rootLimit: 14, nodeActionLimit: 12, progressiveBase: 3, progressiveScale: 1.40,
+    exploration: 1.25, minIterations: 24, leafTacticalDepth: 2, finalTacticalDepth: 4,
+    tacticalBranchLimit: 6, maxTacticalExtensions: 6, finalVerifyCount: 2,
+    finalTacticalWeight: 0.12, confidencePenalty: 0.06, hiddenRiskWeight: 0.10,
+    kingSafetyWeight: 0.90, earlyStopVisits: 700, earlyStopMinChildVisits: 18,
+    earlyStopMargin: 1.65,
+    help: "完整比較安全吃子、暗吃結果與玩家反擊。",
+  },
+  hard: {
+    label: "困難", thinkMs: 1400, comboThinkMs: 350, maxTurns: 5,
+    rootLimit: 20, nodeActionLimit: 16, progressiveBase: 4, progressiveScale: 1.60,
+    exploration: 1.12, minIterations: 48, leafTacticalDepth: 3, finalTacticalDepth: 6,
+    tacticalBranchLimit: 8, maxTacticalExtensions: 8, finalVerifyCount: 3,
+    finalTacticalWeight: 0.18, confidencePenalty: 0.08, hiddenRiskWeight: 0.12,
+    kingSafetyWeight: 1.05, earlyStopVisits: 1400, earlyStopMinChildVisits: 28,
+    earlyStopMargin: 1.50,
+    help: "深入搜尋多步交換、連吃停止時機與雙方強制手段。",
+  },
+  master: {
+    label: "強敵", thinkMs: 3000, comboThinkMs: 650, maxTurns: 7,
+    rootLimit: 28, nodeActionLimit: 22, progressiveBase: 5, progressiveScale: 1.80,
+    exploration: 1.00, minIterations: 80, leafTacticalDepth: 4, finalTacticalDepth: 8,
+    tacticalBranchLimit: 10, maxTacticalExtensions: 10, finalVerifyCount: 4,
+    finalTacticalWeight: 0.22, confidencePenalty: 0.10, hiddenRiskWeight: 0.14,
+    kingSafetyWeight: 1.20, earlyStopVisits: 2500, earlyStopMinChildVisits: 40,
+    earlyStopMargin: 1.35,
+    help: "反覆抽樣暗棋配置，搜尋玩家最強反擊並深度驗證戰術。",
+  },
 };
 
-const SEARCH_VALUE = { K: 1200, A: 300, E: 300, R: 680, N: 440, C: 560, P: 210 };
+const SEARCH_VALUE = { K: 950, A: 650, E: 520, R: 420, N: 340, C: 480, P: 220 };
 const SEARCH_MATE = 100_000_000;
 const SEARCH_FORBIDDEN = 50_000_000;
 const SEARCH_TIMEOUT = { timeout: true };
@@ -116,6 +152,7 @@ function createBoardButtons() {
 
 function newGame() {
   aiRunId += 1;
+  resetAiSearchEngine();
   const pieces = [];
   let id = 1;
   for (const color of ["red", "black"]) {
@@ -473,10 +510,11 @@ async function aiMove() {
   const diff = DIFFICULTIES[loadDifficulty()];
   const comboEnabled = isComboRuleEnabled();
 
-  const action = findBestAction(cloneBoard(state.board), aiColor, humanColor, diff, {
+  const action = await findBestAction(cloneBoard(state.board), aiColor, humanColor, diff, {
     includeDarkCaptures: comboEnabled,
     captured: cloneCaptured(state.captured),
   });
+  if (!isAiRunActive(runId)) return;
   if (!action) {
     state.aiThinking = false;
     state.locked = true;
@@ -496,7 +534,8 @@ async function aiMove() {
     let guard = 0;
     while (guard < MAX_COMBO_STEPS) {
       guard += 1;
-      const comboChoice = chooseBestComboAction(state.board, aiColor, humanColor, pos, diff);
+      const comboChoice = await chooseBestComboAction(state.board, aiColor, humanColor, pos, diff);
+      if (!isAiRunActive(runId)) return;
       if (!comboChoice) break;
       result = await performVisibleAction(comboChoice.action, AI, { runId, combo: true });
       if (!isAiRunActive(runId)) return;
@@ -686,204 +725,623 @@ function hasCaptureOpportunityFrom(board, color, src, options = {}) { return gen
 function generateNonFlipActions(board, color) { return generateActions(board, color, { includeFlips: false, includeMoves: true, includeCaptures: true, includeDarkCaptures: false }); }
 function cloneCaptured(captured) { return (captured || []).map((piece) => ({ ...piece, faceUp: true })); }
 
-function findBestAction(board, aiColor, humanColor, diff, options = {}) {
-  const captured = cloneCaptured(options.captured || (state ? state.captured : []));
-  const comboEnabled = Boolean(options.includeDarkCaptures);
-  const allActions = generateActions(board, aiColor, {
-    includeFlips: true,
-    includeMoves: true,
-    includeCaptures: true,
-    includeDarkCaptures: comboEnabled,
+/*
+ * Dark Chess AI engine
+ *
+ * Design goals:
+ * 1. Never inspect the real identity of a face-down piece.
+ * 2. Treat an entire capture chain as one turn and make STOP a real decision.
+ * 3. Model the opponent as an adversary, not as a random player.
+ * 4. Use ISMCTS for hidden information and alpha-beta for visible tactics.
+ * 5. Reuse information-set nodes after the real game advances.
+ */
+
+const AI_TREE_NODE_LIMIT = 60_000;
+const AI_TREE_KEEP_GENERATIONS = 4;
+const AI_REWARD_SCALE = 2_800;
+const AI_MAX_SEARCH_STEPS = 40;
+
+let aiInformationTree = new Map();
+let aiSearchGeneration = 0;
+
+function resetAiSearchEngine() {
+  aiInformationTree = new Map();
+  aiSearchGeneration = 0;
+}
+
+async function findBestAction(board, aiColor, humanColor, diff, options = {}) {
+  const result = await searchBestInformationAction(board, aiColor, humanColor, diff, {
+    captured: cloneCaptured(options.captured || (state ? state.captured : [])),
+    comboEnabled: Boolean(options.includeDarkCaptures),
+    comboPos: null,
+    thinkMs: options.thinkMs,
+    seed: options.seed,
+  });
+  return result ? result.action : null;
+}
+
+async function chooseBestComboAction(board, aiColor, humanColor, pos, diff, options = {}) {
+  const result = await searchBestInformationAction(board, aiColor, humanColor, diff, {
+    captured: cloneCaptured(options.captured || (state ? state.captured : [])),
+    comboEnabled: true,
+    comboPos: pos ? { r: pos.r, c: pos.c } : null,
+    thinkMs: options.thinkMs ?? diff.comboThinkMs,
+    seed: options.seed,
   });
 
-  const comboDepth = Math.min(10, Math.max(5, diff.depth + 3));
-  let bestAction = null;
-  let bestScore = -Infinity;
-  let evaluated = 0;
+  if (!result || !result.action || result.action[0] === "stop") return null;
+  return { action: result.action, score: result.score, stats: result.stats };
+}
 
-  for (const action of allActions) {
-    const policy = evaluateAiOpeningPolicy(board, action, aiColor, humanColor);
-    if (policy.forbidden) continue;
+async function searchBestInformationAction(board, aiColor, humanColor, diff, options = {}) {
+  const captured = cloneCaptured(options.captured || []);
+  const comboEnabled = Boolean(options.comboEnabled);
+  const comboPos = options.comboPos ? { ...options.comboPos } : null;
+  const publicState = createSimulationState({
+    board: cloneBoard(board),
+    captured,
+    currentColor: aiColor,
+    comboEnabled,
+    comboPos,
+    comboSteps: comboPos ? 1 : 0,
+    positionCounts: state && state.positionCounts ? state.positionCounts : null,
+  });
 
-    let score = searchActionOrderingScore(board, captured, action, aiColor, aiColor, humanColor, diff);
+  const allRootActions = generateRootSearchActions(publicState, aiColor, humanColor, diff);
+  if (allRootActions.length === 0) return null;
+  const rootKey = informationSetKey(publicState);
+  const rootNode = getOrCreateInformationNode(rootKey, publicState.currentColor, publicState.comboPos);
+  rootNode.generation = aiSearchGeneration + 1;
+  const rootRows = selectCandidateRows(
+    buildCachedActionRows(rootNode, allRootActions, publicState, aiColor, diff),
+    diff.rootLimit,
+    true,
+  );
+  const rootActions = rootRows.map((row) => row.action);
+  if (rootActions.length === 1) {
+    const onlyAction = rootActions[0];
+    const onlyScore = rootRows[0].prior;
+    if (state) {
+      state.aiSearchInfo = {
+        engine: "ISMCTS+AlphaBeta",
+        elapsedMs: 0,
+        iterations: 0,
+        nodes: 0,
+        reusedVisits: 0,
+        action: [...onlyAction],
+        top: [{ action: [...onlyAction], visits: 0, mean: 0, prior: onlyScore }],
+      };
+    }
+    return { action: onlyAction, score: onlyScore, stats: state ? state.aiSearchInfo : null };
+  }
 
-    if (action[0] === "capture") {
-      const nextBoard = cloneBoard(board);
-      const nextCaptured = cloneCaptured(captured);
-      const result = applyAction(nextBoard, action);
-      if (result.invalid) continue;
-      if (result.captured) nextCaptured.push({ ...result.captured, faceUp: true });
-      const winner = checkSearchWinner(nextCaptured);
-      if (winner === aiColor) return action;
-      if (result.successCapture && result.lastMove) {
-        score += r20BestKnownComboRoute(nextBoard, nextCaptured, aiColor, result.lastMove, comboDepth, new Map()) * 2.65;
-      }
-      score -= r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor) * 1.25;
-    } else if (action[0] === "move") {
-      const nextBoard = cloneBoard(board);
-      const nextCaptured = cloneCaptured(captured);
-      const result = applyAction(nextBoard, action);
-      if (result.invalid) continue;
-      score -= r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor) * 1.10;
-      score += r20BestImmediateKnownCapture(nextBoard, nextCaptured, aiColor) * 0.20;
-    } else if (action[0] === "flip") {
-      score += r20ExpectedFlipSafety(board, captured, action[1], action[2], aiColor, humanColor, diff);
+  aiSearchGeneration += 1;
+  rootNode.generation = aiSearchGeneration;
+  ensureInformationEdges(rootNode, rootRows);
+
+  const startTime = nowMs();
+  const requestedBudget = Number.isFinite(options.thinkMs) ? options.thinkMs : diff.thinkMs;
+  const thinkMs = Math.max(25, requestedBudget);
+  const totalDeadline = startTime + thinkMs;
+  const deadline = startTime + thinkMs * 0.82;
+  const seedBase = Number.isInteger(options.seed)
+    ? options.seed >>> 0
+    : hashString32(`${rootKey}|${aiSearchGeneration}|${Math.floor(startTime)}`);
+
+  const context = {
+    rootColor: aiColor,
+    opponentColor: humanColor,
+    diff,
+    comboEnabled,
+    rootKey,
+    rootActionKeys: new Set(rootRows.map((row) => row.key)),
+    deadline,
+    nodes: 0,
+    iterations: 0,
+    seedBase,
+    currentIteration: 0,
+    iterationLimit: Number.isInteger(options.iterationLimit) && options.iterationLimit > 0
+      ? options.iterationLimit
+      : null,
+  };
+
+  const reusedVisits = rootNode.visits;
+  let timedOut = false;
+  let lastYield = startTime;
+
+  while (true) {
+    if (context.iterationLimit !== null && context.iterations >= context.iterationLimit) break;
+    if (context.iterationLimit === null && nowMs() >= deadline && context.iterations >= diff.minIterations) break;
+    context.currentIteration = context.iterations;
+    const rng = createSeededRng(mixSeed(seedBase, context.iterations + 1));
+    try {
+      runIsmctsIteration(publicState, rootNode, context, rng);
+    } catch (error) {
+      if (error !== SEARCH_TIMEOUT) throw error;
+      timedOut = true;
+      break;
+    }
+    context.iterations += 1;
+
+    const current = nowMs();
+    if (current - lastYield >= 12) {
+      await sleep(0);
+      lastYield = nowMs();
+      if (!state || !state.aiThinking || state.currentPlayer !== AI) return null;
     }
 
-    score -= policy.penalty || 0;
-    evaluated += 1;
-    if (score > bestScore) {
-      bestScore = score;
-      bestAction = action;
+    if (context.iterations >= diff.minIterations && canStopSearchEarly(rootNode, rootRows, diff)) break;
+  }
+
+  context.deadline = totalDeadline;
+  const ranked = rankRootEdges(rootNode, rootRows, publicState, context);
+  const best = ranked[0] || null;
+  const elapsedMs = Math.max(0, nowMs() - startTime);
+
+  if (state && best) {
+    state.aiSearchInfo = {
+      engine: "ISMCTS+AlphaBeta",
+      elapsedMs: Math.round(elapsedMs),
+      iterations: context.iterations,
+      nodes: context.nodes,
+      reusedVisits,
+      timedOut,
+      action: [...best.action],
+      score: best.selectionScore,
+      top: ranked.slice(0, 5).map((row) => ({
+        action: [...row.action],
+        visits: row.visits,
+        mean: row.mean,
+        confidence: row.confidence,
+        prior: row.prior,
+        tactical: row.tactical,
+      })),
+    };
+  }
+
+  pruneInformationTree(rootKey);
+  return best
+    ? { action: best.action, score: best.selectionScore, stats: state ? state.aiSearchInfo : null }
+    : null;
+}
+
+function runIsmctsIteration(publicState, rootNode, ctx, rng) {
+  const determinedBoard = determinizeBoard(publicState.board, publicState.captured, rng);
+  const sim = createSimulationState({
+    board: determinedBoard,
+    captured: cloneCaptured(publicState.captured),
+    currentColor: publicState.currentColor,
+    comboEnabled: publicState.comboEnabled,
+    comboPos: publicState.comboPos ? { ...publicState.comboPos } : null,
+    comboSteps: publicState.comboSteps,
+    positionCounts: publicState.positionCounts,
+  });
+
+  const visitedNodes = [rootNode];
+  const visitedEdges = [];
+  let node = rootNode;
+  let completedTurns = 0;
+  let steps = 0;
+  let reward = null;
+
+  while (steps < AI_MAX_SEARCH_STEPS && completedTurns < ctx.diff.maxTurns) {
+    steps += 1;
+    touchAiSearchNode(ctx);
+
+    const winner = checkWinner(sim.board);
+    if (winner !== null) {
+      reward = terminalReward(winner, ctx.rootColor, completedTurns);
+      break;
+    }
+
+    const isRootNode = node.key === ctx.rootKey;
+    const actions = generateSimulationActions(sim, ctx, isRootNode);
+    if (actions.length === 0) {
+      reward = sim.currentColor === ctx.rootColor ? -1 : 1;
+      break;
+    }
+
+    let rows = buildCachedActionRows(node, actions, sim, sim.currentColor, ctx.diff);
+    rows = selectCandidateRows(rows, isRootNode ? ctx.diff.rootLimit : ctx.diff.nodeActionLimit, isRootNode);
+    ensureInformationEdges(node, rows);
+
+    const selectable = progressiveInformationEdges(node, rows, ctx.diff, isRootNode);
+    const edge = selectInformationEdge(node, selectable, sim.currentColor, ctx, rng);
+    if (!edge) {
+      reward = evaluateSimulationReward(sim, ctx);
+      break;
+    }
+
+    const wasUnvisited = edge.visits === 0;
+    const previousColor = sim.currentColor;
+    const transition = applySimulationAction(sim, edge.action);
+    if (transition.invalid) {
+      reward = previousColor === ctx.rootColor ? -1 : 1;
+      break;
+    }
+    if (transition.turnEnded) completedTurns += 1;
+
+    const childKey = informationSetKey(sim);
+    const childNode = getOrCreateInformationNode(childKey, sim.currentColor, sim.comboPos);
+    childNode.generation = aiSearchGeneration;
+    edge.childKeys.add(childKey);
+
+    visitedEdges.push(edge);
+    visitedNodes.push(childNode);
+    node = childNode;
+
+    if (wasUnvisited || childNode.visits === 0) {
+      reward = evaluateSimulationReward(sim, ctx);
+      break;
     }
   }
 
-  if (state && bestAction) state.aiSearchInfo = { depth: 2, score: bestScore, nodes: evaluated, action: [...bestAction] };
-  return bestAction;
-}
+  if (reward === null) reward = evaluateSimulationReward(sim, ctx);
+  reward = clamp(reward, -1, 1);
 
-function r20ExpectedFlipSafety(board, captured, r, c, aiColor, humanColor, diff) {
-  const pool = getUnseenPool(board, captured);
-  if (pool.total <= 0) return 0;
-  const outcomes = getUnseenOutcomes(pool, 14);
-  const before = evaluateBoard(board, captured, aiColor, humanColor, diff);
-  let expected = 0;
-
-  for (const outcome of outcomes) {
-    const nextBoard = cloneBoard(board);
-    const hiddenId = nextBoard[r][c] ? nextBoard[r][c].id : `r20-flip-${r}-${c}`;
-    nextBoard[r][c] = { color: outcome.color, kind: outcome.kind, faceUp: true, id: hiddenId };
-    const after = evaluateBoard(nextBoard, captured, aiColor, humanColor, diff);
-    const opponentHit = r20BestImmediateKnownCapture(nextBoard, captured, humanColor);
-    const ownHit = r20BestImmediateKnownCapture(nextBoard, captured, aiColor);
-    expected += outcome.probability * ((after - before) * 0.75 - opponentHit * 1.80 + ownHit * 0.38);
+  for (const visitedNode of visitedNodes) {
+    visitedNode.visits += 1;
+    visitedNode.valueSum += reward;
+    visitedNode.generation = aiSearchGeneration;
   }
-  return expected;
+  for (const edge of visitedEdges) {
+    edge.visits += 1;
+    edge.valueSum += reward;
+  }
 }
 
-function r20BestKnownComboRoute(board, captured, actorColor, pos, depth, memo) {
-  if (!pos || depth <= 0) return 0;
-  const key = `${visiblePositionKey(board, actorColor)}|${capturedCountKey(captured)}|${pos.r},${pos.c}|${depth}`;
-  if (memo.has(key)) return memo.get(key);
+function createSimulationState(options) {
+  const counts = Object.create(null);
+  if (options.positionCounts) {
+    for (const [key, value] of Object.entries(options.positionCounts)) counts[key] = value;
+  }
+  return {
+    board: options.board,
+    captured: options.captured || [],
+    currentColor: options.currentColor,
+    comboEnabled: Boolean(options.comboEnabled),
+    comboPos: options.comboPos ? { ...options.comboPos } : null,
+    comboSteps: options.comboSteps || 0,
+    positionCounts: counts,
+  };
+}
 
-  let best = 0;
-  const actions = generateCaptureActionsFrom(board, actorColor, pos, { includeDark: false });
+function cloneSimulationState(sim) {
+  return createSimulationState({
+    board: cloneBoard(sim.board),
+    captured: cloneCaptured(sim.captured),
+    currentColor: sim.currentColor,
+    comboEnabled: sim.comboEnabled,
+    comboPos: sim.comboPos ? { ...sim.comboPos } : null,
+    comboSteps: sim.comboSteps,
+    positionCounts: sim.positionCounts,
+  });
+}
+
+function generateRootSearchActions(sim, aiColor, humanColor, diff) {
+  let actions;
+  if (sim.comboPos) {
+    actions = [
+      ["stop"],
+      ...generateCaptureActionsFrom(sim.board, sim.currentColor, sim.comboPos, { includeDark: sim.comboEnabled }),
+    ];
+  } else {
+    actions = generateActions(sim.board, sim.currentColor, {
+      includeFlips: true,
+      includeMoves: true,
+      includeCaptures: true,
+      includeDarkCaptures: sim.comboEnabled,
+    }).filter((action) => !evaluateAiOpeningPolicy(sim.board, action, aiColor, humanColor).forbidden);
+  }
+
+  return actions;
+}
+
+function generateSimulationActions(sim, ctx, isRoot = false) {
+  let actions;
+  if (sim.comboPos) {
+    actions = [
+      ["stop"],
+      ...generateCaptureActionsFrom(sim.board, sim.currentColor, sim.comboPos, { includeDark: sim.comboEnabled }),
+    ];
+  } else {
+    actions = generateActions(sim.board, sim.currentColor, {
+      includeFlips: true,
+      includeMoves: true,
+      includeCaptures: true,
+      includeDarkCaptures: sim.comboEnabled,
+    });
+  }
+
+  actions = actions.filter((action) => !simulationActionForbidden(sim, action));
+  if (isRoot) actions = actions.filter((action) => ctx.rootActionKeys.has(actionKey(action)));
+  const unique = [];
   for (const action of actions) {
-    const defender = board[action[3]][action[4]];
-    if (!defender) continue;
-    const nextBoard = cloneBoard(board);
-    const nextCaptured = cloneCaptured(captured);
-    const result = applyAction(nextBoard, action);
-    if (!result.successCapture || !result.lastMove) continue;
-    nextCaptured.push({ ...result.captured, faceUp: true });
-
-    const winner = checkSearchWinner(nextCaptured);
-    if (winner === actorColor) {
-      memo.set(key, SEARCH_MATE / 5);
-      return SEARCH_MATE / 5;
-    }
-
-    const future = r20BestKnownComboRoute(nextBoard, nextCaptured, actorColor, result.lastMove, depth - 1, memo);
-    const finalRisk = maxSquareRisk(nextBoard, result.lastMove.r, result.lastMove.c, actorColor);
-    const score = SEARCH_VALUE[defender.kind] + future * 0.96 - finalRisk * 0.42;
-    if (score > best) best = score;
+    if (!unique.some((existing) => sameAction(existing, action))) unique.push(action);
   }
-  memo.set(key, best);
-  return best;
+  return unique;
 }
 
-function r20BestImmediateKnownCapture(board, captured, actorColor) {
-  let best = 0;
-  const actions = generateActions(board, actorColor, {
+function buildCachedActionRows(node, actions, sim, actorColor, diff) {
+  return actions
+    .map((action) => {
+      const key = actionKey(action);
+      const existing = node.edges.get(key);
+      return {
+        action,
+        key,
+        prior: existing ? existing.prior : quickActionPrior(sim, action, actorColor, diff),
+      };
+    })
+    .sort((a, b) => b.prior - a.prior || a.key.localeCompare(b.key));
+}
+
+function selectCandidateRows(rows, limit, isRoot) {
+  if (rows.length <= limit) return rows;
+  const selected = [];
+  const add = (row) => {
+    if (row && !selected.some((item) => item.key === row.key)) selected.push(row);
+  };
+
+  for (const row of rows) if (row.action[0] === "capture") add(row);
+  for (const type of ["stop", "darkCapture", "move", "flip"]) add(rows.find((row) => row.action[0] === type));
+  for (const row of rows) {
+    if (selected.length >= limit) break;
+    add(row);
+  }
+
+  if (!isRoot && selected.length > limit) selected.length = limit;
+  return selected.sort((a, b) => b.prior - a.prior || a.key.localeCompare(b.key));
+}
+
+function simulationActionForbidden(sim, action) {
+  if (action[0] !== "move") return false;
+  const nextBoard = cloneBoard(sim.board);
+  const result = applyAction(nextBoard, action);
+  if (result.invalid) return true;
+  const nextKey = visiblePositionKey(nextBoard, opponentColor(sim.currentColor));
+  return (sim.positionCounts[nextKey] || 0) >= REPETITION_LIMIT - 1;
+}
+
+function applySimulationAction(sim, action) {
+  if (!action) return { invalid: true, turnEnded: false };
+  if (action[0] === "stop") {
+    endSimulationTurn(sim);
+    return { invalid: false, turnEnded: true, stopped: true };
+  }
+
+  const result = applyAction(sim.board, action);
+  if (result.invalid) return { invalid: true, turnEnded: false, result };
+  if (result.captured) sim.captured.push({ ...result.captured, faceUp: true });
+
+  const winner = checkWinner(sim.board);
+  if (winner !== null) return { invalid: false, turnEnded: false, result, winner };
+
+  if (result.successCapture && sim.comboEnabled && result.lastMove) {
+    const nextPos = { r: result.lastMove.r, c: result.lastMove.c };
+    const canContinue = sim.comboSteps < MAX_COMBO_STEPS
+      && hasCaptureOpportunityFrom(sim.board, sim.currentColor, nextPos, { includeDark: true });
+    if (canContinue) {
+      sim.comboPos = nextPos;
+      sim.comboSteps += 1;
+      return { invalid: false, turnEnded: false, result };
+    }
+  }
+
+  endSimulationTurn(sim);
+  return { invalid: false, turnEnded: true, result };
+}
+
+function endSimulationTurn(sim) {
+  sim.currentColor = opponentColor(sim.currentColor);
+  sim.comboPos = null;
+  sim.comboSteps = 0;
+  const key = visiblePositionKey(sim.board, sim.currentColor);
+  sim.positionCounts[key] = (sim.positionCounts[key] || 0) + 1;
+}
+
+function determinizeBoard(publicBoard, captured, rng) {
+  const hiddenPositions = [];
+  const nextBoard = cloneBoard(publicBoard);
+  for (let r = 0; r < ROWS; r += 1) {
+    for (let c = 0; c < COLS; c += 1) {
+      const piece = publicBoard[r][c];
+      if (piece && !piece.faceUp) hiddenPositions.push({ r, c, id: piece.id });
+    }
+  }
+
+  const pool = unseenPieceList(publicBoard, captured);
+  if (pool.length !== hiddenPositions.length) {
+    throw new Error(`暗棋池數量不一致：暗格 ${hiddenPositions.length}，剩餘棋子 ${pool.length}`);
+  }
+  shuffleWithRng(pool, rng);
+
+  for (let i = 0; i < hiddenPositions.length; i += 1) {
+    const pos = hiddenPositions[i];
+    const sampled = pool[i];
+    nextBoard[pos.r][pos.c] = {
+      color: sampled.color,
+      kind: sampled.kind,
+      faceUp: false,
+      id: pos.id || `det-${i}-${sampled.color}-${sampled.kind}`,
+    };
+  }
+  return nextBoard;
+}
+
+function unseenPieceList(board, captured) {
+  const pool = getUnseenPool(board, captured);
+  const pieces = [];
+  for (const color of ["red", "black"]) {
+    for (const kind of Object.keys(PIECE_COUNTS)) {
+      for (let i = 0; i < pool.counts[color][kind]; i += 1) pieces.push({ color, kind });
+    }
+  }
+  return pieces;
+}
+
+function informationSetKey(sim) {
+  const visibleKey = visiblePositionKey(sim.board, sim.currentColor);
+  const capturedKey = capturedCountKey(sim.captured);
+  const comboKey = sim.comboPos ? `${sim.comboPos.r},${sim.comboPos.c},${sim.comboSteps}` : "-";
+  const repetition = Math.min(REPETITION_LIMIT, sim.positionCounts[visibleKey] || 0);
+  return `${visibleKey}|cap=${capturedKey}|combo=${comboKey}|rep=${repetition}|rule=${sim.comboEnabled ? 1 : 0}`;
+}
+
+function actionKey(action) {
+  return action.join(":");
+}
+
+function getOrCreateInformationNode(key, currentColor, comboPos) {
+  let node = aiInformationTree.get(key);
+  if (!node) {
+    node = {
+      key,
+      currentColor,
+      combo: Boolean(comboPos),
+      visits: 0,
+      valueSum: 0,
+      edges: new Map(),
+      generation: aiSearchGeneration,
+    };
+    aiInformationTree.set(key, node);
+  }
+  return node;
+}
+
+function ensureInformationEdges(node, rows) {
+  for (const row of rows) {
+    if (!node.edges.has(row.key)) {
+      node.edges.set(row.key, {
+        key: row.key,
+        action: [...row.action],
+        prior: row.prior,
+        visits: 0,
+        valueSum: 0,
+        childKeys: new Set(),
+      });
+    } else {
+      node.edges.get(row.key).prior = row.prior;
+    }
+  }
+}
+
+function progressiveInformationEdges(node, rows, diff, isRoot) {
+  const available = rows
+    .map((row) => node.edges.get(row.key))
+    .filter(Boolean)
+    .sort((a, b) => b.prior - a.prior || a.key.localeCompare(b.key));
+  if (isRoot) return available;
+
+  const allowed = Math.max(
+    2,
+    Math.min(
+      available.length,
+      Math.floor(diff.progressiveBase + diff.progressiveScale * Math.sqrt(node.visits + 1)),
+    ),
+  );
+  return available.slice(0, allowed);
+}
+
+function selectInformationEdge(node, edges, currentColor, ctx, rng) {
+  if (edges.length === 0) return null;
+  const unvisited = edges.filter((edge) => edge.visits === 0);
+  if (unvisited.length > 0) {
+    unvisited.sort((a, b) => b.prior - a.prior || a.key.localeCompare(b.key));
+    const choiceCount = Math.min(unvisited.length, currentColor === ctx.rootColor ? 2 : 3);
+    return unvisited[Math.floor(rng() * choiceCount)];
+  }
+
+  const logParent = Math.log(node.visits + 1);
+  let bestEdge = null;
+  let bestValue = -Infinity;
+  for (const edge of edges) {
+    const mean = edge.valueSum / edge.visits;
+    const exploitation = currentColor === ctx.rootColor ? mean : -mean;
+    const exploration = ctx.diff.exploration * Math.sqrt(logParent / edge.visits);
+    const prior = 0.10 * edge.prior / (1 + Math.sqrt(edge.visits));
+    const noise = rng() * 1e-8;
+    const value = exploitation + exploration + prior + noise;
+    if (value > bestValue) {
+      bestValue = value;
+      bestEdge = edge;
+    }
+  }
+  return bestEdge;
+}
+
+function evaluateSimulationReward(sim, ctx) {
+  const winner = checkWinner(sim.board);
+  if (winner !== null) return terminalReward(winner, ctx.rootColor, 0);
+  if (!hasImmediateTacticalNeed(sim)) return scoreToReward(evaluatePositionRaw(sim, ctx.rootColor, ctx.diff));
+
+  const tactical = tacticalAlphaBeta(
+    sim,
+    ctx.diff.leafTacticalDepth,
+    -SEARCH_MATE,
+    SEARCH_MATE,
+    ctx,
+    0,
+    new Map(),
+  );
+  return scoreToReward(tactical);
+}
+
+function hasImmediateTacticalNeed(sim) {
+  if (sim.comboPos) return true;
+  const captures = generateActions(sim.board, sim.currentColor, {
     includeFlips: false,
     includeMoves: false,
     includeCaptures: true,
     includeDarkCaptures: false,
   });
-  for (const action of actions) {
-    const defender = board[action[3]][action[4]];
-    if (!defender) continue;
-    const nextBoard = cloneBoard(board);
-    const result = applyAction(nextBoard, action);
-    const finalRisk = result.lastMove ? maxSquareRisk(nextBoard, result.lastMove.r, result.lastMove.c, actorColor) : 0;
-    best = Math.max(best, SEARCH_VALUE[defender.kind] * 1.35 - finalRisk * 0.70);
+  if (captures.length > 0) return true;
+  return aggregateKnownRisk(sim.board, sim.currentColor) >= SEARCH_VALUE.N * 0.55;
+}
+
+function tacticalAlphaBeta(sim, depth, alpha, beta, ctx, extensionSteps, transposition) {
+  touchAiSearchNode(ctx);
+  const winner = checkWinner(sim.board);
+  if (winner === ctx.rootColor) return SEARCH_MATE - extensionSteps * 100;
+  if (winner === ctx.opponentColor) return -SEARCH_MATE + extensionSteps * 100;
+
+  const tacticalActions = generateTacticalActions(sim, ctx.diff);
+  if (depth <= 0 && tacticalActions.length === 0) {
+    return evaluatePositionRaw(sim, ctx.rootColor, ctx.diff);
   }
-  return best;
-}
-
-function createSearchContext(diff, aiColor, humanColor, comboEnabled, deadline) {
-  const actualCounts = new Map();
-  if (state && state.positionCounts) {
-    for (const [key, value] of Object.entries(state.positionCounts)) actualCounts.set(key, value);
-  }
-  return {
-    diff,
-    aiColor,
-    humanColor,
-    comboEnabled,
-    deadline,
-    nodes: 0,
-    transposition: new Map(),
-    pathCounts: new Map(),
-    actualCounts,
-  };
-}
-
-function nowMs() { return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now(); }
-
-function touchSearchNode(ctx) {
-  ctx.nodes += 1;
-  if ((ctx.nodes & 127) === 0 && nowMs() >= ctx.deadline) throw SEARCH_TIMEOUT;
-}
-
-function searchRootActions(board, captured, candidates, depth, ctx) {
-  let bestAction = null;
-  let bestScore = -Infinity;
-  let alpha = -Infinity;
-  const beta = Infinity;
-
-  for (const row of candidates) {
-    touchSearchNode(ctx);
-    const basePenalty = row.policy.penalty || 0;
-    const value = evaluateSearchAction(board, captured, row.action, depth, ctx.aiColor, null, 0, alpha, beta, ctx, true) - basePenalty;
-    if (value > bestScore) { bestScore = value; bestAction = row.action; }
-    alpha = Math.max(alpha, value);
+  if (extensionSteps >= ctx.diff.maxTacticalExtensions) {
+    return evaluatePositionRaw(sim, ctx.rootColor, ctx.diff);
   }
 
-  return { action: bestAction, score: bestScore };
-}
+  const effectiveActions = tacticalActions.length > 0
+    ? tacticalActions
+    : generateEmergencyActions(sim, ctx.diff);
+  if (effectiveActions.length === 0) return evaluatePositionRaw(sim, ctx.rootColor, ctx.diff);
 
-function searchPosition(board, captured, depth, currentColor, comboPos, comboSteps, alpha, beta, ctx) {
-  touchSearchNode(ctx);
-  const winner = checkSearchWinner(captured);
-  if (winner === ctx.aiColor) return SEARCH_MATE + depth * 10_000 - comboSteps;
-  if (winner === ctx.humanColor) return -SEARCH_MATE - depth * 10_000 + comboSteps;
-
-  if (!comboPos && depth <= 0) return evaluateBoard(board, captured, ctx.aiColor, ctx.humanColor, ctx.diff);
-  if (comboSteps >= MAX_COMBO_STEPS) return finishSearchTurn(board, captured, depth, currentColor, alpha, beta, ctx);
-
-  const cacheKey = searchCacheKey(board, captured, depth, currentColor, comboPos, comboSteps);
-  const useCache = ctx.pathCounts.size === 0;
-  const cached = useCache ? ctx.transposition.get(cacheKey) : undefined;
+  const cacheKey = `${informationSetKey(sim)}|d=${depth}|x=${extensionSteps}`;
+  const cached = transposition.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const maximizing = currentColor === ctx.aiColor;
-  let actions;
-  let best;
+  const maximizing = sim.currentColor === ctx.rootColor;
+  let best = maximizing ? -Infinity : Infinity;
   let exact = true;
 
-  if (comboPos) {
-    actions = prepareSearchActions(board, captured, currentColor, ctx.aiColor, ctx.humanColor, ctx.diff, ctx.comboEnabled, comboPos, false);
-    best = finishSearchTurn(board, captured, depth, currentColor, alpha, beta, ctx);
-    if (maximizing) alpha = Math.max(alpha, best); else beta = Math.min(beta, best);
-  } else {
-    actions = prepareSearchActions(board, captured, currentColor, ctx.aiColor, ctx.humanColor, ctx.diff, ctx.comboEnabled, null, false);
-    if (actions.length === 0) return currentColor === ctx.aiColor ? -SEARCH_MATE + depth : SEARCH_MATE - depth;
-    best = maximizing ? -Infinity : Infinity;
-  }
+  for (const action of effectiveActions) {
+    const next = cloneSimulationState(sim);
+    const beforeColor = next.currentColor;
+    const transition = applySimulationAction(next, action);
+    if (transition.invalid) continue;
+    const nextDepth = transition.turnEnded ? depth - 1 : depth;
+    const value = tacticalAlphaBeta(
+      next,
+      nextDepth,
+      alpha,
+      beta,
+      ctx,
+      extensionSteps + (beforeColor === next.currentColor ? 1 : 0),
+      transposition,
+    );
 
-  for (const action of actions) {
-    const value = evaluateSearchAction(board, captured, action, depth, currentColor, comboPos, comboSteps, alpha, beta, ctx, false);
     if (maximizing) {
       if (value > best) best = value;
       alpha = Math.max(alpha, best);
@@ -891,248 +1349,468 @@ function searchPosition(board, captured, depth, currentColor, comboPos, comboSte
       if (value < best) best = value;
       beta = Math.min(beta, best);
     }
-    if (beta <= alpha) { exact = false; break; }
+    if (beta <= alpha) {
+      exact = false;
+      break;
+    }
   }
 
-  if (exact && useCache) ctx.transposition.set(cacheKey, best);
+  if (!Number.isFinite(best)) best = evaluatePositionRaw(sim, ctx.rootColor, ctx.diff);
+  if (exact) transposition.set(cacheKey, best);
   return best;
 }
 
-function evaluateSearchAction(board, captured, action, depth, currentColor, comboPos, comboSteps, alpha, beta, ctx, isRoot) {
-  const kind = action[0];
-  if (kind === "flip") return evaluateFlipChance(board, captured, action, depth, currentColor, alpha, beta, ctx);
-  if (kind === "darkCapture") return evaluateDarkCaptureChance(board, captured, action, depth, currentColor, comboSteps, alpha, beta, ctx);
-
-  const nextBoard = cloneBoard(board);
-  const nextCaptured = cloneCaptured(captured);
-  const result = applyAction(nextBoard, action);
-  if (result.invalid) return currentColor === ctx.aiColor ? -SEARCH_FORBIDDEN : SEARCH_FORBIDDEN;
-  if (result.captured) nextCaptured.push({ ...result.captured, faceUp: true });
-
-  if (kind === "capture" && result.successCapture && ctx.comboEnabled && result.lastMove) {
-    return searchPosition(nextBoard, nextCaptured, depth, currentColor, { r: result.lastMove.r, c: result.lastMove.c }, comboSteps + 1, alpha, beta, ctx);
+function generateTacticalActions(sim, diff) {
+  let actions = [];
+  if (sim.comboPos) {
+    actions = [
+      ["stop"],
+      ...generateCaptureActionsFrom(sim.board, sim.currentColor, sim.comboPos, { includeDark: false }),
+    ];
+  } else {
+    actions = generateActions(sim.board, sim.currentColor, {
+      includeFlips: false,
+      includeMoves: false,
+      includeCaptures: true,
+      includeDarkCaptures: false,
+    });
   }
-  return finishSearchTurn(nextBoard, nextCaptured, depth, currentColor, alpha, beta, ctx);
+
+  actions = actions.filter((action) => !simulationActionForbidden(sim, action));
+  return actions
+    .map((action) => ({ action, prior: quickActionPrior(sim, action, sim.currentColor, diff) }))
+    .sort((a, b) => b.prior - a.prior)
+    .slice(0, diff.tacticalBranchLimit)
+    .map((row) => row.action);
 }
 
-function finishSearchTurn(board, captured, depth, actorColor, alpha, beta, ctx) {
-  const nextColor = opponentColor(actorColor);
-  const key = visiblePositionKey(board, nextColor);
-  const actualCount = ctx.actualCounts.get(key) || 0;
-  const pathCount = ctx.pathCounts.get(key) || 0;
+function generateEmergencyActions(sim, diff) {
+  if (sim.comboPos) return [["stop"]];
+  const currentRisk = aggregateKnownRisk(sim.board, sim.currentColor);
+  if (currentRisk < SEARCH_VALUE.N * 0.55) return [];
 
-  if (actualCount >= REPETITION_LIMIT - 1) {
-    return actorColor === ctx.aiColor ? -SEARCH_FORBIDDEN : SEARCH_FORBIDDEN;
-  }
-  if (pathCount >= 1) {
-    return actorColor === ctx.aiColor ? -18_000 : 18_000;
-  }
-
-  ctx.pathCounts.set(key, pathCount + 1);
-  try {
-    return searchPosition(board, captured, depth - 1, nextColor, null, 0, alpha, beta, ctx);
-  } finally {
-    if (pathCount === 0) ctx.pathCounts.delete(key);
-    else ctx.pathCounts.set(key, pathCount);
-  }
-}
-
-function evaluateFlipChance(board, captured, action, depth, currentColor, alpha, beta, ctx) {
-  const [, r, c] = action;
-  const pool = getUnseenPool(board, captured);
-  if (pool.total <= 0) return currentColor === ctx.aiColor ? -SEARCH_FORBIDDEN : SEARCH_FORBIDDEN;
-  const outcomes = getUnseenOutcomes(pool, ctx.diff.chanceLimit);
-  let expected = 0;
-
-  for (const outcome of outcomes) {
-    const nextBoard = cloneBoard(board);
-    nextBoard[r][c] = { color: outcome.color, kind: outcome.kind, faceUp: true, id: `search-${outcome.color}-${outcome.kind}-${r}-${c}` };
-    const value = finishSearchTurn(nextBoard, captured, depth, currentColor, alpha, beta, ctx);
-    expected += outcome.probability * value;
-  }
-  const actorBias = strategicFlipBias(board, captured, r, c, currentColor, ctx.diff);
-  return expected + (currentColor === ctx.aiColor ? actorBias : -actorBias);
-}
-
-function evaluateDarkCaptureChance(board, captured, action, depth, currentColor, comboSteps, alpha, beta, ctx) {
-  const [, sr, sc, dr, dc] = action;
-  const attacker = board[sr][sc];
-  if (!attacker || !canAttemptHiddenCapturePath(board, { r: sr, c: sc }, { r: dr, c: dc })) {
-    return currentColor === ctx.aiColor ? -SEARCH_FORBIDDEN : SEARCH_FORBIDDEN;
-  }
-
-  const pool = getUnseenPool(board, captured);
-  if (pool.total <= 0) return currentColor === ctx.aiColor ? -SEARCH_FORBIDDEN : SEARCH_FORBIDDEN;
-  const outcomes = getUnseenOutcomes(pool, ctx.diff.chanceLimit);
-  let expected = 0;
-
-  for (const outcome of outcomes) {
-    const nextBoard = cloneBoard(board);
-    const nextCaptured = cloneCaptured(captured);
-    const defender = { color: outcome.color, kind: outcome.kind, faceUp: true, id: `search-${outcome.color}-${outcome.kind}-${dr}-${dc}` };
-    nextBoard[dr][dc] = defender;
-    let value;
-
-    if (canCapture(nextBoard, { r: sr, c: sc }, { r: dr, c: dc })) {
-      nextBoard[dr][dc] = nextBoard[sr][sc];
-      nextBoard[sr][sc] = null;
-      nextCaptured.push(defender);
-      if (ctx.comboEnabled) value = searchPosition(nextBoard, nextCaptured, depth, currentColor, { r: dr, c: dc }, comboSteps + 1, alpha, beta, ctx);
-      else value = finishSearchTurn(nextBoard, nextCaptured, depth, currentColor, alpha, beta, ctx);
-    } else {
-      value = finishSearchTurn(nextBoard, nextCaptured, depth, currentColor, alpha, beta, ctx);
+  const moves = generateActions(sim.board, sim.currentColor, {
+    includeFlips: false,
+    includeMoves: true,
+    includeCaptures: false,
+    includeDarkCaptures: false,
+  });
+  const rows = [];
+  for (const action of moves) {
+    if (simulationActionForbidden(sim, action)) continue;
+    const next = cloneSimulationState(sim);
+    const transition = applySimulationAction(next, action);
+    if (transition.invalid) continue;
+    const nextRisk = aggregateKnownRisk(next.board, sim.currentColor);
+    if (nextRisk + 1 < currentRisk) {
+      rows.push({ action, gain: currentRisk - nextRisk + quickActionPrior(sim, action, sim.currentColor, diff) * 100 });
     }
-    expected += outcome.probability * value;
   }
-  return expected;
+  return rows
+    .sort((a, b) => b.gain - a.gain)
+    .slice(0, Math.max(2, Math.floor(diff.tacticalBranchLimit / 2)))
+    .map((row) => row.action);
 }
 
-function getUnseenOutcomes(pool, limit) {
+function evaluatePositionRaw(sim, perspectiveColor, diff) {
+  const winner = checkWinner(sim.board);
+  if (winner === perspectiveColor) return SEARCH_MATE;
+  if (winner === opponentColor(perspectiveColor)) return -SEARCH_MATE;
+
+  const enemyColor = opponentColor(perspectiveColor);
+  const remaining = remainingPieceCounts(sim.captured);
+  let score = 0;
+
+  for (const kind of Object.keys(PIECE_COUNTS)) {
+    score += (remaining[perspectiveColor][kind] - remaining[enemyColor][kind]) * SEARCH_VALUE[kind];
+  }
+
+  const ownFeatures = evaluateVisibleColorFeatures(sim, perspectiveColor, diff);
+  const enemyFeatures = evaluateVisibleColorFeatures(sim, enemyColor, diff);
+  score += ownFeatures.activity - enemyFeatures.activity;
+  score += ownFeatures.threat - enemyFeatures.threat;
+  score += enemyFeatures.risk - ownFeatures.risk;
+  score += ownFeatures.cannon - enemyFeatures.cannon;
+  score += ownFeatures.structure - enemyFeatures.structure;
+
+  if (sim.currentColor === perspectiveColor) score += 18;
+  else score -= 18;
+
+  if (sim.comboPos) {
+    const comboValue = comboOpportunityValue(sim.board, sim.currentColor, sim.comboPos, sim.comboEnabled);
+    score += sim.currentColor === perspectiveColor ? comboValue : -comboValue;
+  }
+
+  return score;
+}
+
+function evaluateVisibleColorFeatures(sim, color, diff) {
+  let activity = 0;
+  let risk = 0;
+  let cannon = 0;
+  let structure = 0;
+  const threatByTarget = new Map();
+  const pool = getUnseenPool(sim.board, sim.captured);
+
+  for (let r = 0; r < ROWS; r += 1) {
+    for (let c = 0; c < COLS; c += 1) {
+      const piece = sim.board[r][c];
+      if (!piece || !piece.faceUp || piece.color !== color) continue;
+      const value = SEARCH_VALUE[piece.kind];
+      const emptyMoves = neighbors(r, c).filter((pos) => sim.board[pos.r][pos.c] === null).length;
+      const captures = generateCaptureActionsFrom(sim.board, color, { r, c }, { includeDark: false });
+
+      activity += emptyMoves * 12 + captures.length * 18 - centerDistance(r, c) * 2.2;
+      risk += estimateKnownLossAt(sim.board, { r, c }, color);
+      structure += visibleSupportValue(sim.board, { r, c }, color) * 20;
+      structure -= expectedAdjacentHiddenDanger(sim.board, pool, { r, c }, piece, color) * value * diff.hiddenRiskWeight;
+
+      for (const action of captures) {
+        const target = sim.board[action[3]][action[4]];
+        if (!target) continue;
+        const targetKey = `${action[3]},${action[4]}`;
+        const gain = estimateCaptureNetGain(sim.board, action, color);
+        const old = threatByTarget.get(targetKey) || 0;
+        if (gain > old) threatByTarget.set(targetKey, gain);
+      }
+
+      if (piece.kind === "C") cannon += evaluateCannonPosition(sim.board, { r, c }, color);
+      if (piece.kind === "K") structure -= kingPawnExposure(sim.board, pool, { r, c }, color) * diff.kingSafetyWeight;
+      if (piece.kind === "P") structure += pawnKingPressure(sim.board, { r, c }, color);
+    }
+  }
+
+  const threatValues = [...threatByTarget.values()].sort((a, b) => b - a);
+  let threat = 0;
+  for (let i = 0; i < Math.min(3, threatValues.length); i += 1) threat += threatValues[i] * (1 - i * 0.22);
+  return { activity, risk, cannon, structure, threat };
+}
+
+function estimateKnownLossAt(board, pos, ownColor) {
+  const target = board[pos.r][pos.c];
+  if (!target || !target.faceUp || target.color !== ownColor) return 0;
+  let worst = 0;
+
+  for (let r = 0; r < ROWS; r += 1) {
+    for (let c = 0; c < COLS; c += 1) {
+      const attacker = board[r][c];
+      if (!attacker || !attacker.faceUp || attacker.color === ownColor) continue;
+      const action = ["capture", r, c, pos.r, pos.c];
+      if (!canCapture(board, { r, c }, pos)) continue;
+
+      const nextBoard = cloneBoard(board);
+      applyAction(nextBoard, action);
+      const recapture = bestKnownCaptureOnSquare(nextBoard, pos, ownColor);
+      const targetLoss = SEARCH_VALUE[target.kind];
+      const attackerValue = SEARCH_VALUE[attacker.kind];
+      const netLoss = targetLoss - (recapture ? attackerValue * 0.78 : 0);
+      worst = Math.max(worst, netLoss);
+    }
+  }
+  return Math.max(0, worst);
+}
+
+function bestKnownCaptureOnSquare(board, pos, actorColor) {
+  let best = 0;
+  const target = board[pos.r][pos.c];
+  if (!target || target.color === actorColor) return 0;
+  for (let r = 0; r < ROWS; r += 1) {
+    for (let c = 0; c < COLS; c += 1) {
+      const piece = board[r][c];
+      if (!piece || !piece.faceUp || piece.color !== actorColor) continue;
+      if (canCapture(board, { r, c }, pos)) best = Math.max(best, SEARCH_VALUE[target.kind]);
+    }
+  }
+  return best;
+}
+
+function estimateCaptureNetGain(board, action, actorColor) {
+  const target = board[action[3]][action[4]];
+  const attacker = board[action[1]][action[2]];
+  if (!target || !attacker) return 0;
+  const nextBoard = cloneBoard(board);
+  applyAction(nextBoard, action);
+  const destination = { r: action[3], c: action[4] };
+  const replyLoss = estimateKnownLossAt(nextBoard, destination, actorColor);
+  return SEARCH_VALUE[target.kind] - replyLoss * 0.9;
+}
+
+function aggregateKnownRisk(board, color) {
+  let risk = 0;
+  for (let r = 0; r < ROWS; r += 1) {
+    for (let c = 0; c < COLS; c += 1) {
+      const piece = board[r][c];
+      if (piece && piece.faceUp && piece.color === color) risk += estimateKnownLossAt(board, { r, c }, color);
+    }
+  }
+  return risk;
+}
+
+function visibleSupportValue(board, pos, color) {
+  let supporters = 0;
+  const target = board[pos.r][pos.c];
+  if (!target) return 0;
+
+  for (let r = 0; r < ROWS; r += 1) {
+    for (let c = 0; c < COLS; c += 1) {
+      if (r === pos.r && c === pos.c) continue;
+      const piece = board[r][c];
+      if (!piece || !piece.faceUp || piece.color !== color) continue;
+      const hypothetical = { ...target, color: opponentColor(color), faceUp: true };
+      if (canHypotheticalCapture(board, { r, c }, pos, hypothetical)) supporters += 1;
+    }
+  }
+  return Math.min(2, supporters);
+}
+
+function expectedAdjacentHiddenDanger(board, pool, pos, target, color) {
+  if (!pool.total) return 0;
+  const enemy = opponentColor(color);
+  let probability = 0;
+  for (const nb of neighbors(pos.r, pos.c)) {
+    const cell = board[nb.r][nb.c];
+    if (!cell || cell.faceUp) continue;
+    for (const kind of Object.keys(PIECE_COUNTS)) {
+      const count = pool.counts[enemy][kind];
+      if (count <= 0 || kind === "C") continue;
+      const attacker = { color: enemy, kind, faceUp: true };
+      if (canNormalPieceCapture(attacker, target)) probability += count / pool.total;
+    }
+  }
+  return Math.min(1.5, probability);
+}
+
+function evaluateCannonPosition(board, pos, color) {
+  let score = 0;
+  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  for (const [dr, dc] of directions) {
+    let r = pos.r + dr;
+    let c = pos.c + dc;
+    let screenFound = false;
+    while (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+      const cell = board[r][c];
+      if (cell) {
+        if (!screenFound) {
+          screenFound = true;
+          score += 9;
+        } else {
+          if (!cell.faceUp) score += 28;
+          else if (cell.color !== color) score += SEARCH_VALUE[cell.kind] * 0.18;
+          else score -= 8;
+          break;
+        }
+      }
+      r += dr;
+      c += dc;
+    }
+  }
+  return score;
+}
+
+function kingPawnExposure(board, pool, pos, color) {
+  const enemy = opponentColor(color);
+  let exposure = 0;
+  for (const nb of neighbors(pos.r, pos.c)) {
+    const piece = board[nb.r][nb.c];
+    if (!piece) continue;
+    if (piece.faceUp && piece.color === enemy && piece.kind === "P") exposure += 1.8;
+    if (!piece.faceUp && pool.total) exposure += pool.counts[enemy].P / pool.total;
+  }
+  return exposure * SEARCH_VALUE.K * 0.75;
+}
+
+function pawnKingPressure(board, pos, color) {
+  let score = 0;
+  for (const nb of neighbors(pos.r, pos.c)) {
+    const piece = board[nb.r][nb.c];
+    if (piece && piece.faceUp && piece.color !== color && piece.kind === "K") score += SEARCH_VALUE.K * 1.2;
+  }
+  return score;
+}
+
+function comboOpportunityValue(board, color, pos, includeDark) {
+  const actions = generateCaptureActionsFrom(board, color, pos, { includeDark });
+  let known = 0;
+  let hidden = 0;
+  for (const action of actions) {
+    if (action[0] === "capture") {
+      const target = board[action[3]][action[4]];
+      if (target) known = Math.max(known, SEARCH_VALUE[target.kind]);
+    } else hidden += 1;
+  }
+  return known * 0.45 + Math.min(3, hidden) * 45;
+}
+
+function quickActionPrior(sim, action, actorColor, diff) {
+  const kind = action[0];
+  if (kind === "stop") {
+    const before = evaluatePositionRaw(sim, actorColor, diff);
+    const next = cloneSimulationState(sim);
+    applySimulationAction(next, action);
+    const after = evaluatePositionRaw(next, actorColor, diff);
+    return Math.tanh((after - before) / 1_600);
+  }
+
+  if (kind === "capture" || kind === "move") {
+    const before = evaluatePositionRaw(sim, actorColor, diff);
+    const next = cloneSimulationState(sim);
+    const transition = applySimulationAction(next, action);
+    if (transition.invalid) return -1;
+    const after = evaluatePositionRaw(next, actorColor, diff);
+    let bonus = 0;
+    if (kind === "capture") {
+      const target = sim.board[action[3]][action[4]];
+      if (target) bonus += SEARCH_VALUE[target.kind] * 0.35;
+      if (transition.winner === actorColor) bonus += SEARCH_MATE / 2;
+    }
+    return Math.tanh((after - before + bonus) / 1_600);
+  }
+
+  if (kind === "flip") return expectedRevealPrior(sim, action, actorColor, diff);
+  if (kind === "darkCapture") return expectedDarkCapturePrior(sim, action, actorColor, diff);
+  return 0;
+}
+
+function expectedRevealPrior(sim, action, actorColor, diff) {
+  const pool = getUnseenPool(sim.board, sim.captured);
+  if (!pool.total) return -1;
+  const [, r, c] = action;
+  const outcomes = fullUnseenOutcomes(pool);
+  let expected = 0;
+
+  for (const outcome of outcomes) {
+    const next = cloneSimulationState(sim);
+    const oldId = next.board[r][c] ? next.board[r][c].id : `flip-${r}-${c}`;
+    next.board[r][c] = { color: outcome.color, kind: outcome.kind, faceUp: true, id: oldId };
+    endSimulationTurn(next);
+    const value = evaluatePositionRaw(next, actorColor, diff);
+    expected += outcome.probability * value;
+  }
+  const locationBias = -centerDistance(r, c) * 7;
+  return Math.tanh((expected + locationBias) / AI_REWARD_SCALE);
+}
+
+function expectedDarkCapturePrior(sim, action, actorColor, diff) {
+  const pool = getUnseenPool(sim.board, sim.captured);
+  if (!pool.total) return -1;
+  const [, sr, sc, dr, dc] = action;
+  const outcomes = fullUnseenOutcomes(pool);
+  let expected = 0;
+
+  for (const outcome of outcomes) {
+    const next = cloneSimulationState(sim);
+    next.board[dr][dc] = {
+      color: outcome.color,
+      kind: outcome.kind,
+      faceUp: false,
+      id: next.board[dr][dc] ? next.board[dr][dc].id : `dark-${dr}-${dc}`,
+    };
+    const transition = applySimulationAction(next, action);
+    if (transition.invalid) continue;
+    expected += outcome.probability * evaluatePositionRaw(next, actorColor, diff);
+  }
+  const stopValue = evaluatePositionRaw(sim, actorColor, diff);
+  return Math.tanh((expected - stopValue) / AI_REWARD_SCALE);
+}
+
+function fullUnseenOutcomes(pool) {
   const outcomes = [];
   for (const color of ["red", "black"]) {
     for (const kind of Object.keys(PIECE_COUNTS)) {
       const count = pool.counts[color][kind];
-      if (count > 0) outcomes.push({ color, kind, count, probability: count / pool.total, importance: count * SEARCH_VALUE[kind] });
+      if (count > 0) outcomes.push({ color, kind, count, probability: count / pool.total });
     }
   }
-  outcomes.sort((a, b) => b.importance - a.importance);
-  if (outcomes.length <= limit) return outcomes;
-  const kept = outcomes.slice(0, limit);
-  const keptProbability = kept.reduce((sum, item) => sum + item.probability, 0) || 1;
-  for (const item of kept) item.probability /= keptProbability;
-  return kept;
+  return outcomes;
 }
 
-function prepareSearchActions(board, captured, currentColor, aiColor, humanColor, diff, comboEnabled, comboPos = null, isRoot = false) {
-  let actions;
-  if (comboPos) {
-    actions = generateCaptureActionsFrom(board, currentColor, comboPos, { includeDark: comboEnabled });
-  } else {
-    actions = generateActions(board, currentColor, {
-      includeFlips: true,
-      includeMoves: true,
-      includeCaptures: true,
-      includeDarkCaptures: comboEnabled,
-    });
-  }
+function rankRootEdges(rootNode, rootRows, publicState, ctx) {
+  const maxVisits = Math.max(1, ...rootRows.map((row) => rootNode.edges.get(row.key)?.visits || 0));
+  const tacticalCandidates = rootRows
+    .map((row) => rootNode.edges.get(row.key))
+    .filter(Boolean)
+    .sort((a, b) => b.visits - a.visits)
+    .slice(0, ctx.diff.finalVerifyCount);
+  const tacticalMap = new Map();
 
-  const rows = actions.map((action) => ({
-    action,
-    score: searchActionOrderingScore(board, captured, action, currentColor, aiColor, humanColor, diff),
-  }));
-  rows.sort((a, b) => b.score !== a.score ? b.score - a.score : a.action.join("-").localeCompare(b.action.join("-")));
-
-  if (comboPos) return rows.slice(0, diff.branchLimit).map((row) => row.action);
-
-  const forced = rows.filter((row) => row.action[0] === "capture");
-  const dark = rows.filter((row) => row.action[0] === "darkCapture").slice(0, Math.max(4, Math.floor(diff.branchLimit / 3)));
-  const moves = rows.filter((row) => row.action[0] === "move").slice(0, Math.max(5, Math.floor(diff.branchLimit / 2)));
-  const flips = rows.filter((row) => row.action[0] === "flip").slice(0, diff.flipLimit);
-  const merged = [...forced, ...dark, ...moves, ...flips];
-  const unique = [];
-  for (const row of merged.sort((a, b) => b.score - a.score)) {
-    if (!unique.some((item) => sameAction(item, row.action))) unique.push(row.action);
-    if (unique.length >= diff.branchLimit) break;
-  }
-  return unique;
-}
-
-function searchActionOrderingScore(board, captured, action, currentColor, aiColor, humanColor, diff) {
-  const kind = action[0];
-  if (kind === "capture") {
-    const [, sr, sc, dr, dc] = action;
-    const attacker = board[sr][sc];
-    const defender = board[dr][dc];
-    if (!attacker || !defender) return -Infinity;
-    const nextBoard = cloneBoard(board);
-    applyAction(nextBoard, action);
-    const replyRisk = maxSquareRisk(nextBoard, dr, dc, currentColor);
-    const winningCapture = checkWinner(nextBoard) === currentColor ? SEARCH_MATE / 10 : 0;
-    return winningCapture + SEARCH_VALUE[defender.kind] * 20 - SEARCH_VALUE[attacker.kind] * 0.5 - replyRisk * 5;
-  }
-  if (kind === "darkCapture") return expectedDarkCaptureOrderingScore(board, captured, action, currentColor, diff);
-  if (kind === "move") {
-    const [, sr, sc, dr, dc] = action;
-    const piece = board[sr][sc];
-    if (!piece) return -Infinity;
-    const nextBoard = cloneBoard(board);
-    applyAction(nextBoard, action);
-    const beforeRisk = maxSquareRisk(board, sr, sc, currentColor);
-    const afterRisk = maxSquareRisk(nextBoard, dr, dc, currentColor);
-    const threat = maxThreatValueFrom(nextBoard, dr, dc, currentColor);
-    const mobility = generateCaptureActionsFrom(nextBoard, currentColor, { r: dr, c: dc }, { includeDark: false }).length;
-    return (beforeRisk - afterRisk) * 6 + threat * 3 + mobility * 20 - centerDistance(dr, dc) * 2;
-  }
-  if (kind === "flip") {
-    const [, r, c] = action;
-    return strategicFlipBias(board, captured, r, c, currentColor, diff);
-  }
-  return 0;
-}
-
-function evaluateBoard(board, captured, aiColor, humanColor, diff) {
-  const winner = checkSearchWinner(captured);
-  if (winner === aiColor) return SEARCH_MATE;
-  if (winner === humanColor) return -SEARCH_MATE;
-
-  const remaining = remainingPieceCounts(captured);
-  let score = 0;
-  let aiCount = 0;
-  let humanCount = 0;
-  for (const kind of Object.keys(PIECE_COUNTS)) {
-    score += (remaining[aiColor][kind] - remaining[humanColor][kind]) * SEARCH_VALUE[kind];
-    aiCount += remaining[aiColor][kind];
-    humanCount += remaining[humanColor][kind];
-  }
-  score += (aiCount - humanCount) * 260;
-
-  let aiRisk = 0;
-  let humanRisk = 0;
-  let aiThreat = 0;
-  let humanThreat = 0;
-  let aiActivity = 0;
-  let humanActivity = 0;
-
-  for (let r = 0; r < ROWS; r += 1) {
-    for (let c = 0; c < COLS; c += 1) {
-      const piece = board[r][c];
-      if (!piece || !piece.faceUp) continue;
-      const risk = maxSquareRisk(board, r, c, piece.color);
-      const threat = maxThreatValueFrom(board, r, c, piece.color);
-      const activity = neighbors(r, c).filter((pos) => board[pos.r][pos.c] === null).length * 8 - centerDistance(r, c) * 1.5;
-      const pawnKing = piece.kind === "K" ? kingNearEnemyPawnPenalty(board, captured, r, c, piece.color, diff) : 0;
-      if (piece.color === aiColor) {
-        aiRisk += risk + pawnKing;
-        aiThreat += threat;
-        aiActivity += activity;
-      } else {
-        humanRisk += risk + pawnKing;
-        humanThreat += threat;
-        humanActivity += activity;
-      }
+  for (const edge of tacticalCandidates) {
+    if (!["capture", "move", "stop"].includes(edge.action[0])) continue;
+    const next = cloneSimulationState(publicState);
+    const transition = applySimulationAction(next, edge.action);
+    if (transition.invalid) continue;
+    try {
+      const value = tacticalAlphaBeta(
+        next,
+        ctx.diff.finalTacticalDepth,
+        -SEARCH_MATE,
+        SEARCH_MATE,
+        ctx,
+        0,
+        new Map(),
+      );
+      tacticalMap.set(edge.key, scoreToReward(value));
+    } catch (error) {
+      if (error !== SEARCH_TIMEOUT) throw error;
+      break;
     }
   }
 
-  const aiMobility = countKnownMobility(board, aiColor);
-  const humanMobility = countKnownMobility(board, humanColor);
-  score += (aiThreat - humanThreat) * 0.78;
-  score += (humanRisk - aiRisk) * 0.92 * diff.riskTaste;
-  score += (aiMobility - humanMobility) * 11;
-  score += aiActivity - humanActivity;
-  score += forcingCaptureRouteValue(board, aiColor, 3) * 0.42;
-  score -= forcingCaptureRouteValue(board, humanColor, 3) * 0.48;
-  return score;
+  return rootRows
+    .map((row) => {
+      const edge = rootNode.edges.get(row.key);
+      const visits = edge ? edge.visits : 0;
+      const mean = visits > 0 ? edge.valueSum / visits : -1;
+      const confidence = Math.sqrt(Math.log(rootNode.visits + 2) / (visits + 1));
+      const tactical = tacticalMap.has(row.key) ? tacticalMap.get(row.key) : null;
+      const visitShare = visits / maxVisits;
+      const selectionScore = mean
+        - ctx.diff.confidencePenalty * confidence
+        + row.prior * 0.06
+        + visitShare * 0.035
+        + (tactical === null ? 0 : tactical * ctx.diff.finalTacticalWeight);
+      return {
+        action: row.action,
+        prior: row.prior,
+        visits,
+        mean,
+        confidence,
+        tactical,
+        selectionScore,
+      };
+    })
+    .sort((a, b) => b.selectionScore - a.selectionScore || b.visits - a.visits || actionKey(a.action).localeCompare(actionKey(b.action)));
 }
 
+function canStopSearchEarly(rootNode, rootRows, diff) {
+  if (rootNode.visits < diff.earlyStopVisits) return false;
+  const ranked = rootRows
+    .map((row) => {
+      const edge = rootNode.edges.get(row.key);
+      return {
+        visits: edge ? edge.visits : 0,
+        mean: edge && edge.visits ? edge.valueSum / edge.visits : -1,
+      };
+    })
+    .filter((row) => row.visits >= diff.earlyStopMinChildVisits)
+    .sort((a, b) => b.mean - a.mean);
+  if (ranked.length < 2) return false;
+  const first = ranked[0];
+  const second = ranked[1];
+  const firstError = Math.sqrt(Math.log(rootNode.visits + 2) / first.visits);
+  const secondError = Math.sqrt(Math.log(rootNode.visits + 2) / second.visits);
+  return first.mean - diff.earlyStopMargin * firstError > second.mean + diff.earlyStopMargin * secondError;
+}
 
-function checkSearchWinner(captured) {
-  const remaining = remainingPieceCounts(captured);
-  const redTotal = Object.values(remaining.red).reduce((sum, value) => sum + value, 0);
-  const blackTotal = Object.values(remaining.black).reduce((sum, value) => sum + value, 0);
-  if (redTotal > 0 && blackTotal > 0) return null;
-  if (redTotal > 0) return "red";
-  if (blackTotal > 0) return "black";
-  return null;
+function terminalReward(winnerColor, rootColor, distance) {
+  const base = winnerColor === rootColor ? 1 : -1;
+  const distanceAdjustment = Math.min(0.08, distance * 0.006);
+  return base > 0 ? base - distanceAdjustment : base + distanceAdjustment;
+}
+
+function scoreToReward(score) {
+  if (score >= SEARCH_MATE / 2) return 1;
+  if (score <= -SEARCH_MATE / 2) return -1;
+  return Math.tanh(score / AI_REWARD_SCALE);
 }
 
 function remainingPieceCounts(captured) {
@@ -1140,190 +1818,103 @@ function remainingPieceCounts(captured) {
     red: { ...PIECE_COUNTS },
     black: { ...PIECE_COUNTS },
   };
-  for (const piece of captured || []) counts[piece.color][piece.kind] = Math.max(0, counts[piece.color][piece.kind] - 1);
+  for (const piece of captured || []) {
+    if (counts[piece.color] && Number.isFinite(counts[piece.color][piece.kind])) {
+      counts[piece.color][piece.kind] = Math.max(0, counts[piece.color][piece.kind] - 1);
+    }
+  }
   return counts;
 }
 
-function countKnownMobility(board, color) {
-  return generateActions(board, color, { includeFlips: false, includeMoves: true, includeCaptures: true, includeDarkCaptures: false }).length;
-}
-
-function maxThreatValueFrom(board, r, c, color) {
-  const piece = board[r][c];
-  if (!piece || !piece.faceUp || piece.color !== color) return 0;
-  let best = 0;
-  for (let rr = 0; rr < ROWS; rr += 1) {
-    for (let cc = 0; cc < COLS; cc += 1) {
-      const target = board[rr][cc];
-      if (!target || !target.faceUp || target.color === color) continue;
-      if (canCapture(board, { r, c }, { r: rr, c: cc })) {
-        let value = SEARCH_VALUE[target.kind];
-        if (piece.kind === "P" && target.kind === "K") value += 2400;
-        best = Math.max(best, value);
-      }
-    }
+function capturedCountKey(captured) {
+  const counts = {
+    red: { K: 0, A: 0, E: 0, R: 0, N: 0, C: 0, P: 0 },
+    black: { K: 0, A: 0, E: 0, R: 0, N: 0, C: 0, P: 0 },
+  };
+  for (const piece of captured || []) {
+    if (counts[piece.color] && Number.isFinite(counts[piece.color][piece.kind])) counts[piece.color][piece.kind] += 1;
   }
-  return best;
-}
-
-function maxSquareRisk(board, r, c, ownColor) {
-  const target = board[r][c];
-  if (!target || !target.faceUp || target.color !== ownColor) return 0;
-  let worst = 0;
-  for (let rr = 0; rr < ROWS; rr += 1) {
-    for (let cc = 0; cc < COLS; cc += 1) {
-      const attacker = board[rr][cc];
-      if (!attacker || !attacker.faceUp || attacker.color === ownColor) continue;
-      if (canCapture(board, { r: rr, c: cc }, { r, c })) {
-        let value = SEARCH_VALUE[target.kind];
-        if (attacker.kind === "P" && target.kind === "K") value += 2400;
-        worst = Math.max(worst, value);
-      }
-    }
-  }
-  return worst;
-}
-
-function forcingCaptureRouteValue(board, color, depth, pos = null) {
-  if (depth <= 0) return 0;
-  const sources = [];
-  if (pos) sources.push(pos);
-  else {
-    for (let r = 0; r < ROWS; r += 1) for (let c = 0; c < COLS; c += 1) {
-      const piece = board[r][c];
-      if (piece && piece.faceUp && piece.color === color) sources.push({ r, c });
-    }
-  }
-  let best = 0;
-  for (const src of sources) {
-    const actions = generateCaptureActionsFrom(board, color, src, { includeDark: false });
-    for (const action of actions) {
-      const defender = board[action[3]][action[4]];
-      const nextBoard = cloneBoard(board);
-      const result = applyAction(nextBoard, action);
-      const future = result.lastMove ? forcingCaptureRouteValue(nextBoard, color, depth - 1, result.lastMove) : 0;
-      best = Math.max(best, SEARCH_VALUE[defender.kind] + future * 0.8);
-    }
-  }
-  return best;
-}
-
-function strategicFlipBias(board, captured, r, c, currentColor, diff) {
-  const pool = getUnseenPool(board, captured);
-  if (pool.total <= 0) return -SEARCH_FORBIDDEN;
-  const enemyColor = opponentColor(currentColor);
-  let score = -centerDistance(r, c) * 5;
-  const enemyPawnProb = pool.counts[enemyColor].P / pool.total;
-  const ownPawnProb = pool.counts[currentColor].P / pool.total;
-
-  for (const nb of neighbors(r, c)) {
-    const piece = board[nb.r][nb.c];
-    if (!piece || !piece.faceUp) continue;
-    if (piece.color === currentColor) {
-      score += SEARCH_VALUE[piece.kind] * 0.06;
-      if (piece.kind === "K") score -= enemyPawnProb * 1800 * diff.riskTaste;
-    } else {
-      score -= SEARCH_VALUE[piece.kind] * 0.08;
-      if (piece.kind === "K") score += ownPawnProb * 1500;
-    }
-  }
-  return score;
-}
-
-function expectedDarkCaptureOrderingScore(board, captured, action, currentColor, diff) {
-  const [, sr, sc, dr, dc] = action;
-  const attacker = board[sr][sc];
-  if (!attacker) return -Infinity;
-  const pool = getUnseenPool(board, captured);
-  if (pool.total <= 0) return -Infinity;
-  let expected = 0;
-  let success = 0;
-  for (const color of ["red", "black"]) {
-    for (const kind of Object.keys(PIECE_COUNTS)) {
-      const count = pool.counts[color][kind];
-      if (count <= 0) continue;
-      const probability = count / pool.total;
-      const defender = { color, kind, faceUp: true };
-      if (color !== currentColor && canHypotheticalCapture(board, { r: sr, c: sc }, { r: dr, c: dc }, defender)) {
-        success += probability;
-        expected += probability * SEARCH_VALUE[kind];
-      } else {
-        expected -= probability * (color === currentColor ? 160 : SEARCH_VALUE[kind] * 0.35);
-      }
-    }
-  }
-  const danger = maxSquareRisk(board, sr, sc, currentColor);
-  return expected * 3 + success * 400 - danger * diff.riskTaste;
-}
-
-function kingNearEnemyPawnPenalty(board, captured, r, c, color, diff = DIFFICULTIES.normal) {
-  let penalty = 0;
-  const pool = getUnseenPool(board, captured);
-  const enemyColor = opponentColor(color);
-  const hiddenEnemyPawnProb = pool.total ? pool.counts[enemyColor].P / pool.total : 0;
-  for (const nb of neighbors(r, c)) {
-    const piece = board[nb.r][nb.c];
-    if (!piece) continue;
-    if (!piece.faceUp) penalty += hiddenEnemyPawnProb * 1250 * diff.riskTaste;
-    else if (piece.color !== color && piece.kind === "P") penalty += 4200;
-  }
-  return penalty;
+  return ["red", "black"]
+    .map((color) => Object.keys(PIECE_COUNTS).map((kind) => counts[color][kind]).join(","))
+    .join("/");
 }
 
 function centerDistance(r, c) {
   return Math.abs(r - (ROWS - 1) / 2) + Math.abs(c - (COLS - 1) / 2);
 }
 
-function searchCacheKey(board, captured, depth, currentColor, comboPos, comboSteps) {
-  const capturedKey = capturedCountKey(captured);
-  const comboKey = comboPos ? `${comboPos.r},${comboPos.c},${comboSteps}` : "-";
-  return `${visiblePositionKey(board, currentColor)}|${capturedKey}|${depth}|${comboKey}`;
+function nowMs() {
+  return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 }
 
-function capturedCountKey(captured) {
-  const counts = { red: { K: 0, A: 0, E: 0, R: 0, N: 0, C: 0, P: 0 }, black: { K: 0, A: 0, E: 0, R: 0, N: 0, C: 0, P: 0 } };
-  for (const piece of captured || []) counts[piece.color][piece.kind] += 1;
-  return ["red", "black"].map((color) => Object.keys(PIECE_COUNTS).map((kind) => counts[color][kind]).join("")).join("/");
+function touchAiSearchNode(ctx) {
+  ctx.nodes += 1;
+  if ((ctx.nodes & 127) === 0 && nowMs() >= ctx.deadline) throw SEARCH_TIMEOUT;
 }
 
-function chooseBestComboAction(board, aiColor, humanColor, pos, diff) {
-  const captured = cloneCaptured(state ? state.captured : []);
-  const actions = generateCaptureActionsFrom(board, aiColor, pos, { includeDark: true });
-  if (actions.length === 0) return null;
+function pruneInformationTree(rootKey) {
+  if (aiInformationTree.size <= AI_TREE_NODE_LIMIT) return;
+  const entries = [...aiInformationTree.entries()];
+  entries.sort((a, b) => {
+    const aNode = a[1];
+    const bNode = b[1];
+    const aRoot = a[0] === rootKey ? 1 : 0;
+    const bRoot = b[0] === rootKey ? 1 : 0;
+    if (aRoot !== bRoot) return bRoot - aRoot;
+    if (aNode.generation !== bNode.generation) return bNode.generation - aNode.generation;
+    return bNode.visits - aNode.visits;
+  });
 
-  const comboDepth = Math.min(10, Math.max(5, diff.depth + 3));
-  let bestAction = null;
-  let bestScore = 0;
-
-  for (const action of actions) {
-    let score = searchActionOrderingScore(board, captured, action, aiColor, aiColor, humanColor, diff);
-
-    if (action[0] === "capture") {
-      const nextBoard = cloneBoard(board);
-      const nextCaptured = cloneCaptured(captured);
-      const result = applyAction(nextBoard, action);
-      if (!result.successCapture || !result.lastMove) continue;
-      nextCaptured.push({ ...result.captured, faceUp: true });
-
-      const winner = checkSearchWinner(nextCaptured);
-      if (winner === aiColor) return { action, score: SEARCH_MATE };
-
-      const future = r20BestKnownComboRoute(nextBoard, nextCaptured, aiColor, result.lastMove, comboDepth - 1, new Map());
-      const opponentHit = r20BestImmediateKnownCapture(nextBoard, nextCaptured, humanColor);
-      const finalRisk = maxSquareRisk(nextBoard, result.lastMove.r, result.lastMove.c, aiColor);
-      score += future * 4.20 - opponentHit * 1.80 - finalRisk * 1.30;
-    } else {
-      score *= 0.88;
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestAction = action;
-    }
+  const keep = new Set(entries.slice(0, Math.floor(AI_TREE_NODE_LIMIT * 0.78)).map(([key]) => key));
+  for (const [key, node] of entries) {
+    const recent = aiSearchGeneration - node.generation <= AI_TREE_KEEP_GENERATIONS;
+    if (!keep.has(key) && !recent) aiInformationTree.delete(key);
   }
-
-  return bestAction ? { action: bestAction, score: bestScore } : null;
+  if (aiInformationTree.size > AI_TREE_NODE_LIMIT) {
+    const remaining = [...aiInformationTree.entries()]
+      .sort((a, b) => b[1].visits - a[1].visits)
+      .slice(0, AI_TREE_NODE_LIMIT);
+    aiInformationTree = new Map(remaining);
+  }
 }
+
+function createSeededRng(seed) {
+  let value = seed >>> 0;
+  if (value === 0) value = 0x9e3779b9;
+  return () => {
+    value ^= value << 13;
+    value ^= value >>> 17;
+    value ^= value << 5;
+    return (value >>> 0) / 0x100000000;
+  };
+}
+
+function mixSeed(a, b) {
+  let value = (a ^ Math.imul(b >>> 0, 0x9e3779b1)) >>> 0;
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x85ebca6b) >>> 0;
+  value ^= value >>> 13;
+  value = Math.imul(value, 0xc2b2ae35) >>> 0;
+  value ^= value >>> 16;
+  return value >>> 0;
+}
+
+function hashString32(text) {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function shuffleWithRng(array, rng) {
+  for (let i = array.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+}
+
 
 function visiblePositionKey(board, nextColor) {
   const cells = [];
@@ -1658,7 +2249,7 @@ function applyFixedLandscapeStage() {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=mobile-r20-20260717-validated-tactical-win-engine").catch(() => {});
+    navigator.serviceWorker.register("./service-worker.js?v=mobile-r21-20260728-ismcts-alpha-beta").catch(() => {});
   });
 }
 
