@@ -116,7 +116,7 @@ p { margin: 12px 0 0; color: var(--muted); line-height: 1.6; }
 
 .settings-card { padding: clamp(18px, 4vw, 34px); min-height: calc(100svh - 88px); overflow: auto; -webkit-overflow-scrolling: touch; }
 .page-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
-.setting-block, .setting-toggle-block, .delay-setting-block {
+.setting-block, .setting-toggle-block, .delay-setting-block, .model-info-block {
   margin-top: 14px; padding: 14px; border-radius: 20px; background: rgba(255,255,255,.56); border: 1px solid var(--line);
 }
 .setting-label { display: block; margin-bottom: 8px; font-weight: 1000; }
@@ -130,6 +130,24 @@ p { margin: 12px 0 0; color: var(--muted); line-height: 1.6; }
 .delay-label-row .setting-label { margin: 0; }
 .delay-value { padding: 5px 10px; border-radius: 999px; background: linear-gradient(145deg,#ffe6a5,#d3953a); font-size: 12px; font-weight: 1000; }
 .range-input { width: 100%; accent-color: #c98931; }
+.model-info-block { min-width: 0; }
+.model-info-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.model-info-kicker { color: var(--muted); font-size: 10px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.model-info-heading strong { display: block; margin-top: 2px; font-size: 16px; }
+.model-status {
+  flex: 0 0 auto; padding: 5px 9px; border-radius: 999px; background: #ece7dc;
+  color: #665846; font-size: 11px; font-weight: 1000;
+}
+.model-status[data-status="ready"] { background: #dff2df; color: #23632c; }
+.model-status[data-status="training"] { background: #fff0c7; color: #7a5212; }
+.model-status[data-status="error"] { background: #f8d9d5; color: #8d2921; }
+.model-stats {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px;
+  margin: 10px 0 0;
+}
+.model-stats div { min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.model-stats dt { color: var(--muted); font-size: 10px; font-weight: 800; white-space: nowrap; }
+.model-stats dd { min-width: 0; margin: 0; color: var(--ink); font-size: 10px; font-weight: 950; text-align: right; overflow-wrap: anywhere; }
 .hidden { display: none !important; }
 
 .game-layout { min-height: calc(100svh - 74px); }
@@ -718,7 +736,8 @@ h2 { font-size: clamp(26px, 6.7vmin, 46px) !important; }
 .settings-card .page-title-row { grid-column: 1 / 3; margin: 0 !important; }
 .setting-block,
 .setting-toggle-block,
-.delay-setting-block {
+.delay-setting-block,
+.model-info-block {
   margin: 0 !important;
   padding: clamp(10px, 2.4vmin, 16px) !important;
   border-radius: clamp(14px, 2.6vmin, 20px) !important;
@@ -1510,7 +1529,8 @@ body {
 .settings-card h2 { font-size: 42px !important; }
 .setting-block,
 .setting-toggle-block,
-.delay-setting-block { margin-top: 14px !important; }
+.delay-setting-block,
+.model-info-block { margin-top: 14px !important; }
 
 .game-layout,
 body.is-game-view .game-layout {

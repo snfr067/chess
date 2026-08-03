@@ -1,9 +1,10 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-mobile-r17-20260618-fixed-stage-no-rotate-events";
+const CACHE_NAME = "taiwan-dark-chess-pwa-learning-r1-20260729-online-imitation";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=mobile-r17-20260618-fixed-stage-no-rotate-events",
-  "./app.js?v=mobile-r17-20260618-fixed-stage-no-rotate-events",
+  "./style.css?v=learning-r1-20260729-online-imitation",
+  "./learning.js?v=learning-r1-20260729-online-imitation",
+  "./app.js?v=learning-r1-20260729-online-imitation",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg"

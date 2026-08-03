@@ -8,11 +8,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="台灣暗棋">
   <title>台灣暗棋</title>
-  <meta name="app-version" content="mobile-r16-20260618-safe-viewport-boardfit">
+  <meta name="app-version" content="learning-r1-20260729-online-imitation">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./apple-touch-icon.svg">
-  <link rel="stylesheet" href="./style.css?v=mobile-r16-20260618-safe-viewport-boardfit">
+  <link rel="stylesheet" href="./style.css?v=learning-r1-20260729-online-imitation">
 </head>
 <body>
   <div class="app-shell">
@@ -52,12 +52,12 @@
           </div>
 
           <div class="setting-block">
-            <label class="setting-label" for="difficultySelect">AI 難度</label>
+            <label class="setting-label" for="difficultySelect">資料不足時的備援難度</label>
             <select id="difficultySelect" class="select-input">
-              <option value="easy">入門：反應快，搜尋較淺</option>
-              <option value="normal">一般：平衡速度與強度</option>
-              <option value="hard">困難：搜尋較深，風險估算更重</option>
-              <option value="master">強敵：反覆抽樣暗棋配置，搜尋玩家最強反擊並深度驗證戰術。</option>
+              <option value="easy">入門：較簡單的快速備援</option>
+              <option value="normal">一般：平衡模仿與局面判斷</option>
+              <option value="hard">困難：更重視安全吃子</option>
+              <option value="master">強敵：採用較穩健的快速備援</option>
             </select>
             <p id="difficultyHelp" class="setting-help"></p>
           </div>
@@ -75,11 +75,29 @@
           <div class="delay-setting-block">
             <div class="delay-label-row">
               <label class="setting-label" for="aiDelayRange">AI 每步延遲</label>
-              <span id="aiDelayValue" class="delay-value">0.8 秒</span>
+              <span id="aiDelayValue" class="delay-value">0.5 秒</span>
             </div>
-            <input id="aiDelayRange" class="range-input" type="range" min="0.2" max="2.5" step="0.1" value="0.8">
-            <p class="setting-help">延遲會套用在 AI 標示、翻暗棋、食用與連吃的每個可視步驟。</p>
+            <input id="aiDelayRange" class="range-input" type="range" min="0.2" max="0.7" step="0.1" value="0.5">
+            <p class="setting-help">模型判斷與畫面節奏共用單步時間；常態控制在 1.5 秒內，強制上限為 1.9 秒。</p>
           </div>
+
+          <section class="model-info-block" aria-labelledby="learningModelTitle">
+            <div class="model-info-heading">
+              <div>
+                <div class="model-info-kicker">Learning Model</div>
+                <strong id="learningModelTitle">棋路學習模型</strong>
+              </div>
+              <span id="learningModelStatus" class="model-status" data-status="untrained">尚未訓練</span>
+            </div>
+            <dl class="model-stats">
+              <div><dt>最後更新</dt><dd id="learningUpdatedAt">尚無更新</dd></div>
+              <div><dt>已學習棋局</dt><dd id="learningGameCount">0 局</dd></div>
+              <div><dt>完成／中斷</dt><dd id="learningGameBreakdown">0／0 局</dd></div>
+              <div><dt>已學習走法</dt><dd id="learningDecisionCount">0 步</dd></div>
+              <div><dt>模型大小</dt><dd id="learningModelSize">0 B</dd></div>
+              <div><dt>棋譜資料量</dt><dd id="learningDataSize">0 B</dd></div>
+            </dl>
+          </section>
         </div>
       </section>
 
@@ -160,7 +178,8 @@
     </div>
   </div>
 
-  <script src="./app.js?v=mobile-r17-20260618-fixed-stage-no-rotate-events"></script>
-  <div id="versionBadge" class="version-badge">版本：mobile-r17-20260618-fixed-stage-no-rotate-events</div>
+  <script src="./learning.js?v=learning-r1-20260729-online-imitation"></script>
+  <script src="./app.js?v=learning-r1-20260729-online-imitation"></script>
+  <div id="versionBadge" class="version-badge">版本：learning-r1-20260729-online-imitation</div>
 </body>
 </html>
