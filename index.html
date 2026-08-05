@@ -8,11 +8,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="台灣暗棋">
   <title>台灣暗棋</title>
-  <meta name="app-version" content="learning-r1-20260729-online-imitation">
+  <meta name="app-version" content="learning-v2-20260805-tactical-imitation">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./apple-touch-icon.svg">
-  <link rel="stylesheet" href="./style.css?v=learning-r1-20260729-online-imitation">
+  <link rel="stylesheet" href="./style.css?v=learning-v2-20260805-tactical-imitation">
 </head>
 <body>
   <div class="app-shell">
@@ -51,23 +51,22 @@
             <button id="settingsBackBtn" class="ghost-btn">返回首頁</button>
           </div>
 
-          <div class="setting-block">
-            <label class="setting-label" for="difficultySelect">資料不足時的備援難度</label>
-            <select id="difficultySelect" class="select-input">
-              <option value="easy">入門：較簡單的快速備援</option>
-              <option value="normal">一般：平衡模仿與局面判斷</option>
-              <option value="hard">困難：更重視安全吃子</option>
-              <option value="master">強敵：採用較穩健的快速備援</option>
-            </select>
-            <p id="difficultyHelp" class="setting-help"></p>
-          </div>
-
           <div class="setting-toggle-block">
             <label class="checkbox-row" for="comboRuleCheckbox">
               <input id="comboRuleCheckbox" type="checkbox">
               <span>
                 <strong>連吃規則</strong>
                 <small>成功食用後，同一顆棋可繼續食用；可嘗試食用暗棋，失敗則翻開目標並結束回合。</small>
+              </span>
+            </label>
+          </div>
+
+          <div class="setting-toggle-block">
+            <label class="checkbox-row" for="correctionModeCheckbox">
+              <input id="correctionModeCheckbox" type="checkbox">
+              <span>
+                <strong>AI 原子行動糾正模式</strong>
+                <small>AI 每次先顯示一個原子行動；同意、只改這一步，或接手示範本回合。連吃時每一段都會重新詢問。</small>
               </span>
             </label>
           </div>
@@ -91,12 +90,32 @@
             </div>
             <dl class="model-stats">
               <div><dt>最後更新</dt><dd id="learningUpdatedAt">尚無更新</dd></div>
+              <div><dt>基礎模型</dt><dd id="learningBaseVersion">—</dd></div>
+              <div><dt>個人模型</dt><dd id="learningPersonalVersion">v0（槽 A）</dd></div>
               <div><dt>已學習棋局</dt><dd id="learningGameCount">0 局</dd></div>
               <div><dt>完成／中斷</dt><dd id="learningGameBreakdown">0／0 局</dd></div>
               <div><dt>已學習走法</dt><dd id="learningDecisionCount">0 步</dd></div>
+              <div><dt>同意／糾正／示範</dt><dd><span id="learningApprovalCount">0 步</span>／<span id="learningCorrectionCount">0 步</span>／<span id="learningDemoCount">0 步</span></dd></div>
+              <div><dt>參數量</dt><dd id="learningParamCount">0 個</dd></div>
               <div><dt>模型大小</dt><dd id="learningModelSize">0 B</dd></div>
               <div><dt>棋譜資料量</dt><dd id="learningDataSize">0 B</dd></div>
+              <div><dt>全部 Top-1</dt><dd id="learningTop1">0.0%（0）</dd></div>
+              <div><dt>全部 Top-3</dt><dd id="learningTop3">0.0%（0）</dd></div>
+              <div><dt>最近 20 局 Top-1</dt><dd id="learningRecentTop1">0.0%（0）</dd></div>
+              <div><dt>連吃 Top-1</dt><dd id="learningComboTop1">0.0%（0）</dd></div>
+              <div><dt>暗吃 Top-1</dt><dd id="learningDarkTop1">0.0%（0）</dd></div>
+              <div><dt>停止 Top-1</dt><dd id="learningStopTop1">0.0%（0）</dd></div>
+              <div><dt>序列完整／前綴</dt><dd id="learningSequenceExact">0.0%／前綴 0.0%</dd></div>
+              <div><dt>推論平均／P95</dt><dd id="learningInferenceTime">平均 0／P95 0 ms</dd></div>
+              <div><dt>上次訓練</dt><dd id="learningTrainingInfo">0 筆／0 ms</dd></div>
+              <div><dt>儲存狀態</dt><dd id="learningPersistence">一般網站儲存</dd></div>
             </dl>
+            <div class="model-actions">
+              <button id="exportLearningBtn" class="secondary-btn compact" type="button">匯出模型</button>
+              <button id="importLearningBtn" class="secondary-btn compact" type="button">匯入模型</button>
+              <button id="rollbackLearningBtn" class="ghost-btn compact" type="button">回復上一槽</button>
+              <input id="importLearningFile" class="hidden" type="file" accept="application/json,.json">
+            </div>
           </section>
         </div>
       </section>
@@ -109,6 +128,14 @@
                 <button id="gameBackBtn" class="ghost-btn">首頁</button>
                 <button id="newGameBtn" class="secondary-btn compact">重開</button>
                 <button id="endTurnBtn" class="primary-btn compact hidden">結束回合</button>
+                <div id="correctionPanel" class="correction-panel hidden" aria-live="polite">
+                  <span id="correctionText">AI 打算走這一步</span>
+                  <div class="correction-actions">
+                    <button id="approveAiStepBtn" class="correction-approve" type="button">同意</button>
+                    <button id="changeAiStepBtn" class="correction-change" type="button">修改</button>
+                    <button id="takeOverAiTurnBtn" class="correction-takeover" type="button">玩家代打</button>
+                  </div>
+                </div>
               </div>
 
               <section class="graveyard side-grave human-grave" aria-label="您的墳墓區">
@@ -178,8 +205,10 @@
     </div>
   </div>
 
-  <script src="./learning.js?v=learning-r1-20260729-online-imitation"></script>
-  <script src="./app.js?v=learning-r1-20260729-online-imitation"></script>
-  <div id="versionBadge" class="version-badge">版本：learning-r1-20260729-online-imitation</div>
+  <script src="./vendor/tf.min.js?v=4.22.0"></script>
+  <script src="./model-core.js?v=learning-v2-20260805-tactical-imitation"></script>
+  <script src="./learning.js?v=learning-v2-20260805-tactical-imitation"></script>
+  <script src="./app.js?v=learning-v2-20260805-tactical-imitation"></script>
+  <div id="versionBadge" class="version-badge">版本：learning-v2-20260805-tactical-imitation</div>
 </body>
 </html>

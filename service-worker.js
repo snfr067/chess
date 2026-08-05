@@ -1,10 +1,14 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-learning-r1-20260729-online-imitation";
+const CACHE_NAME = "taiwan-dark-chess-pwa-learning-v2-20260805-tactical-imitation";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=learning-r1-20260729-online-imitation",
-  "./learning.js?v=learning-r1-20260729-online-imitation",
-  "./app.js?v=learning-r1-20260729-online-imitation",
+  "./style.css?v=learning-v2-20260805-tactical-imitation",
+  "./vendor/tf.min.js?v=4.22.0",
+  "./model-core.js?v=learning-v2-20260805-tactical-imitation",
+  "./base-model.json",
+  "./base-model.weights.bin",
+  "./learning.js?v=learning-v2-20260805-tactical-imitation",
+  "./app.js?v=learning-v2-20260805-tactical-imitation",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg"

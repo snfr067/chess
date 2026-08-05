@@ -1721,3 +1721,83 @@ body.is-game-view .game-layout {
 .visual-only-status,
 .status-box { display: none !important; }
 .version-badge { display: none !important; }
+
+/* ===== learning v2: fixed correction rail and measurable model panel ===== */
+.settings-card {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+.model-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+}
+
+.model-stats div {
+  min-height: 24px;
+  padding: 4px 6px;
+  border-radius: 9px;
+  background: rgba(255,255,255,.34);
+}
+
+.model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.correction-panel {
+  min-width: 0;
+  flex: 1 1 280px;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(72px, .65fr) minmax(228px, 1.8fr);
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 14px;
+  color: #3b210f;
+  background: linear-gradient(145deg, rgba(255,244,205,.96), rgba(228,184,93,.96));
+  border: 1px solid rgba(102,58,17,.28);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.72);
+  overflow: hidden;
+}
+
+.correction-panel > span {
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.15;
+  font-weight: 1000;
+  text-align: center;
+}
+
+.correction-actions {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.correction-actions button {
+  min-width: 0;
+  height: 34px;
+  padding: 0 4px;
+  border-radius: 9px;
+  font-size: 9px;
+  font-weight: 1000;
+  white-space: nowrap;
+}
+
+.correction-approve { color: #f8fff6; background: #34783b; border: 1px solid #245b2a; }
+.correction-change { color: #3f250c; background: #fff2bd; border: 1px solid #b47b2e; }
+.correction-takeover { color: #f5f8ff; background: #3d659c; border: 1px solid #294a78; }
+.correction-panel.input-active { grid-template-columns: 1fr; }
+.correction-panel.input-active .correction-actions { display: none; }
+
+@media (max-width: 760px) {
+  .model-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .correction-panel { grid-template-columns: minmax(62px, .55fr) minmax(210px, 1.8fr); }
+  .correction-actions button { font-size: 8px; }
+}

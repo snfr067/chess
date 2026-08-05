@@ -1,4 +1,4 @@
-const APP_VERSION = "learning-r1-20260729-online-imitation";
+const APP_VERSION = "learning-v2-20260805-tactical-imitation";
 
 const ROWS = 4;
 const COLS = 8;
@@ -47,15 +47,12 @@ const DIFFICULTIES = {
 };
 
 const SEARCH_VALUE = { K: 950, A: 650, E: 520, R: 420, N: 340, C: 480, P: 220 };
-const SEARCH_MATE = 100_000_000;
 const SEARCH_FORBIDDEN = 50_000_000;
-const SEARCH_TIMEOUT = { timeout: true };
 const MAX_COMBO_STEPS = 15;
 const MAX_TURN_HISTORY = 96;
 const REPETITION_LIMIT = 3;
 const AI_STEP_HARD_LIMIT_MS = 1900;
 const AI_STEP_GUARD_MS = 70;
-const AI_MODEL_DECISION_BUDGET_MS = 250;
 
 let state = null;
 let aiRunId = 0;
@@ -81,13 +78,18 @@ function loadAiDelayMs() { return Math.round(loadAiDelaySeconds() * 1000); }
 function formatSeconds(value) { return `${Number.parseFloat(value).toFixed(1)} 秒`; }
 function isComboRuleEnabled() { return state && typeof state.comboRule === "boolean" ? state.comboRule : loadComboRule(); }
 function actorDelay(actor, ratio = 1) { return actor === AI ? Math.max(220, Math.round(loadAiDelayMs() * ratio)) : Math.max(260, Math.round(520 * ratio)); }
+function loadCorrectionMode() { const saved = localStorage.getItem("darkChessCorrectionMode"); return saved === null ? true : saved === "true"; }
+function saveCorrectionMode(enabled) { localStorage.setItem("darkChessCorrectionMode", enabled ? "true" : "false"); }
+function isCorrectionInputActive() { return Boolean(state && state.correction && ["change", "takeover"].includes(state.correction.inputMode)); }
 
 function initDom() {
   for (const id of [
     "homeView", "settingsView", "gameView", "startGameBtn", "openSettingsBtn", "settingsBackBtn", "gameBackBtn", "newGameBtn", "endTurnBtn",
     "difficultySelect", "comboRuleCheckbox", "aiDelayRange", "aiDelayValue", "difficultyHelp", "board", "statusText", "detailText",
     "humanColorLabel", "aiColorLabel", "turnOrb", "redGrave", "blackGrave", "capturedCount", "leftGraveTitle", "rightGraveTitle", "leftGraveCount", "rightGraveCount", "toast", "modal", "modalTitle", "modalText", "modalHomeBtn", "modalRestartBtn",
-    "learningModelStatus", "learningUpdatedAt", "learningGameCount", "learningGameBreakdown", "learningDecisionCount", "learningModelSize", "learningDataSize"
+    "correctionModeCheckbox", "correctionPanel", "correctionText", "approveAiStepBtn", "changeAiStepBtn", "takeOverAiTurnBtn",
+    "learningModelStatus", "learningUpdatedAt", "learningGameCount", "learningGameBreakdown", "learningDecisionCount", "learningModelSize", "learningDataSize",
+    "learningBaseVersion", "learningPersonalVersion", "learningApprovalCount", "learningCorrectionCount", "learningDemoCount", "learningTop1", "learningTop3", "learningComboTop1", "learningDarkTop1", "learningStopTop1", "learningSequenceExact", "learningRecentTop1", "learningInferenceTime", "learningTrainingInfo", "learningPersistence", "learningParamCount", "exportLearningBtn", "importLearningBtn", "importLearningFile", "rollbackLearningBtn"
   ]) dom[id] = document.getElementById(id);
 }
 
@@ -98,15 +100,29 @@ function bindEvents() {
   dom.gameBackBtn.addEventListener("click", () => { interruptCurrentGame(); hideModal(); showView("home"); });
   dom.newGameBtn.addEventListener("click", () => newGame());
   dom.endTurnBtn.addEventListener("click", async () => {
-    if (!state || !state.combo.active || state.currentPlayer !== HUMAN || state.aiThinking || state.locked) return;
-    await recordHumanLearningDecision(["stop"]);
+    if (!state || !state.combo.active || state.locked) return;
+    if (isCorrectionInputActive()) {
+      await completeCorrectionInput(["stop"], { type: "stop", successCapture: false, captured: null, lastMove: null, invalid: false });
+      return;
+    }
+    if (state.currentPlayer !== HUMAN || state.aiThinking) return;
+    await recordHumanLearningDecision(["stop"], "normal");
+    recordTurnAction(HUMAN, ["stop"], { type: "stop", successCapture: false, captured: null, lastMove: null, invalid: false }, {});
     state.combo = { active: false, r: null, c: null };
     state.selected = null;
     endTurn();
   });
-  dom.difficultySelect.addEventListener("change", () => { saveDifficulty(dom.difficultySelect.value); syncSettingsUI(); });
+  if (dom.difficultySelect) dom.difficultySelect.addEventListener("change", () => { saveDifficulty(dom.difficultySelect.value); syncSettingsUI(); });
   dom.comboRuleCheckbox.addEventListener("change", () => { saveComboRule(dom.comboRuleCheckbox.checked); syncSettingsUI(); });
+  dom.correctionModeCheckbox.addEventListener("change", () => { saveCorrectionMode(dom.correctionModeCheckbox.checked); syncSettingsUI(); });
   dom.aiDelayRange.addEventListener("input", () => { saveAiDelaySeconds(dom.aiDelayRange.value); syncSettingsUI(); });
+  dom.approveAiStepBtn.addEventListener("click", () => resolveAiCorrection("approve"));
+  dom.changeAiStepBtn.addEventListener("click", () => resolveAiCorrection("change"));
+  dom.takeOverAiTurnBtn.addEventListener("click", () => resolveAiCorrection("takeover"));
+  dom.exportLearningBtn.addEventListener("click", exportLearningArchive);
+  dom.importLearningBtn.addEventListener("click", () => dom.importLearningFile.click());
+  dom.importLearningFile.addEventListener("change", importLearningArchive);
+  dom.rollbackLearningBtn.addEventListener("click", rollbackLearningModel);
   dom.modalHomeBtn.addEventListener("click", () => { interruptCurrentGame(); hideModal(); showView("home"); });
   dom.modalRestartBtn.addEventListener("click", () => { hideModal(); newGame(); showView("game"); });
 }
@@ -120,9 +136,10 @@ function showView(name) {
 
 function syncSettingsUI() {
   const difficulty = loadDifficulty();
-  dom.difficultySelect.value = difficulty;
-  dom.difficultyHelp.textContent = DIFFICULTIES[difficulty].help;
+  if (dom.difficultySelect) dom.difficultySelect.value = difficulty;
+  if (dom.difficultyHelp) dom.difficultyHelp.textContent = DIFFICULTIES[difficulty].help;
   dom.comboRuleCheckbox.checked = loadComboRule();
+  dom.correctionModeCheckbox.checked = loadCorrectionMode();
   const aiDelay = loadAiDelaySeconds();
   dom.aiDelayRange.value = aiDelay.toFixed(1);
   dom.aiDelayValue.textContent = formatSeconds(aiDelay);
@@ -147,10 +164,11 @@ function createBoardButtons() {
   }
 }
 
-function newGame() {
+function newGame(startTurn = true) {
+  persistCurrentLearningTurn(true);
   finishCurrentLearningGame("interrupted", "interrupted");
+  cancelAiCorrection();
   aiRunId += 1;
-  resetAiSearchEngine();
   const pieces = [];
   let id = 1;
   for (const color of ["red", "black"]) {
@@ -162,12 +180,13 @@ function newGame() {
   const board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
   let idx = 0;
   for (let r = 0; r < ROWS; r += 1) for (let c = 0; c < COLS; c += 1) board[r][c] = pieces[idx++];
+  const firstPlayer = Math.random() < 0.5 ? HUMAN : AI;
   state = {
     board,
     selected: null,
     turnColor: null,
     playerColor: { [HUMAN]: null, [AI]: null },
-    currentPlayer: HUMAN,
+    currentPlayer: firstPlayer,
     aiThinking: false,
     locked: false,
     captured: [],
@@ -184,9 +203,28 @@ function newGame() {
     positionCounts: Object.create(null),
     aiSearchInfo: null,
     learningGame: window.DarkChessLearning ? window.DarkChessLearning.createSession() : null,
+    learningTurnNumber: 0,
+    learningSequenceIndex: 0,
+    correction: {
+      inputMode: null,
+      takeOver: false,
+      proposedAction: null,
+      proposalContext: null,
+      inputContext: null,
+      rejectedAction: null,
+      resolveProposal: null,
+      resolveInput: null,
+    },
   };
-  setStatus("請先翻一顆棋。", "");
-  render();
+  if (state.currentPlayer === AI && startTurn) {
+    state.aiThinking = true;
+    setStatus("AI 正在行動", "");
+    render();
+    window.setTimeout(aiMove, 40);
+  } else {
+    setStatus("請先翻一顆棋。", "");
+    render();
+  }
 }
 
 function finishCurrentLearningGame(status, outcome) {
@@ -196,7 +234,9 @@ function finishCurrentLearningGame(status, outcome) {
 }
 
 function interruptCurrentGame() {
+  persistCurrentLearningTurn(true);
   finishCurrentLearningGame("interrupted", "interrupted");
+  cancelAiCorrection();
   aiRunId += 1;
   if (!state) return;
   state.aiThinking = false;
@@ -204,54 +244,121 @@ function interruptCurrentGame() {
   state.pendingAction = null;
 }
 
-async function recordHumanLearningDecision(action) {
+async function recordHumanLearningDecision(action, labelType = "normal") {
   if (!state || !state.learningGame || !window.DarkChessLearning) return false;
-  const legalActions = generateLearningLegalActions(HUMAN);
-  if (!legalActions.some((candidate) => sameAction(candidate, action))) return false;
-  const snapshot = buildLearningSnapshot(HUMAN);
   try {
-    return await window.DarkChessLearning.recordDecision(
-      state.learningGame,
-      snapshot,
-      legalActions,
-      action
-    );
+    const candidates = generateLearningCandidates(HUMAN);
+    if (!candidates.some((candidate) => sameAction(candidate.action, action))) return false;
+    const context = await window.DarkChessLearning.prepareDecision(buildLearningObservation(HUMAN), candidates);
+    return window.DarkChessLearning.recordChoice(state.learningGame, context, action, {
+      labelType,
+      source: "human",
+      turnId: currentLearningTurnId(),
+      combo: state.combo.active,
+      comboStep: state.learningSequenceIndex,
+      sequenceIndex: state.learningSequenceIndex++,
+      phase: learningPhaseLabel(),
+    });
   } catch {
     return false;
   }
 }
 
-function buildLearningSnapshot(actor, comboPos = null) {
-  const ownColor = state.playerColor[actor];
-  const opponent = ownColor ? opponentColor(ownColor) : null;
-  const board = [];
-  for (let r = 0; r < ROWS; r += 1) {
-    for (let c = 0; c < COLS; c += 1) {
-      const piece = state.board[r][c];
-      if (!piece) board.push(".");
-      else if (!piece.faceUp) board.push("D");
-      else if (!ownColor) board.push(`${piece.color === "red" ? "r" : "b"}${piece.kind}`);
-      else board.push(`${piece.color === ownColor ? "o" : "x"}${piece.kind}`);
-    }
-  }
+function currentLearningTurnId() {
+  const gameId = state && state.learningGame ? state.learningGame.id : "game";
+  return `${gameId}-turn-${state ? state.learningTurnNumber : 0}`;
+}
 
-  const unseen = getUnseenPool(state.board, state.captured);
-  const ownPool = ownColor ? unseen.counts[ownColor] : unseen.counts.red;
-  const opponentPool = opponent ? unseen.counts[opponent] : unseen.counts.black;
+function persistCurrentLearningTurn(partial = false) {
+  if (!state || !state.learningGame || !window.DarkChessLearning || !state.turnActions.length) return;
+  void window.DarkChessLearning.recordTurn(state.learningGame, {
+    id: currentLearningTurnId(),
+    actor: state.currentPlayer,
+    color: state.playerColor[state.currentPlayer],
+    actions: state.turnActions.map((row) => ({ ...row, action: [...row.action] })),
+    partial,
+    completedAt: new Date().toISOString(),
+  });
+}
+
+function learningPhaseLabel() {
+  const occupied = state.board.flat().filter(Boolean).length;
+  if (occupied >= 24) return "opening";
+  if (occupied >= 10) return "middle";
+  return "late";
+}
+
+function buildLearningObservation(actor, comboPos = null) {
+  const ownColor = state.playerColor[actor];
+  const enemyColor = ownColor ? opponentColor(ownColor) : null;
+  const channels = new Float32Array(ROWS * COLS * 25);
+  const kindIndex = { K: 0, A: 1, E: 2, R: 3, N: 4, C: 5, P: 6 };
   const activeCombo = comboPos || (
     state.combo.active && state.currentPlayer === actor
       ? { r: state.combo.r, c: state.combo.c }
       : null
   );
+  const lastEvent = state.turnActions.length
+    ? state.turnActions[state.turnActions.length - 1]
+    : state.turnHistory.length && state.turnHistory[state.turnHistory.length - 1].actions.length
+      ? state.turnHistory[state.turnHistory.length - 1].actions.at(-1)
+      : null;
 
+  for (let r = 0; r < ROWS; r += 1) {
+    for (let c = 0; c < COLS; c += 1) {
+      const offset = (r * COLS + c) * 25;
+      const piece = state.board[r][c];
+      if (!piece) channels[offset + 15] = 1;
+      else if (!piece.faceUp) channels[offset + 14] = 1;
+      else if (ownColor) channels[offset + (piece.color === ownColor ? 0 : 7) + kindIndex[piece.kind]] = 1;
+      else channels[offset + (piece.color === "red" ? 0 : 7) + kindIndex[piece.kind]] = 1;
+      if (ownColor) {
+        channels[offset + 16] = countPublicAttackers(state.board, { r, c }, ownColor) > 0 ? 1 : 0;
+        channels[offset + 17] = countPublicAttackers(state.board, { r, c }, enemyColor) > 0 ? 1 : 0;
+        channels[offset + 18] = countPublicSupporters(state.board, { r, c }, ownColor) > 0 ? 1 : 0;
+        channels[offset + 19] = countPublicSupporters(state.board, { r, c }, enemyColor) > 0 ? 1 : 0;
+      }
+      channels[offset + 20] = activeCombo && activeCombo.r === r && activeCombo.c === c ? 1 : 0;
+      channels[offset + 21] = lastEvent && lastEvent.source && lastEvent.source.r === r && lastEvent.source.c === c ? 1 : 0;
+      channels[offset + 22] = lastEvent && lastEvent.destination && lastEvent.destination.r === r && lastEvent.destination.c === c ? 1 : 0;
+      channels[offset + 23] = r / 3;
+      channels[offset + 24] = c / 7;
+    }
+  }
+
+  const unseen = getUnseenPool(state.board, state.captured);
+  const sideOrder = ownColor ? [ownColor, enemyColor] : ["red", "black"];
+  const total = Math.max(1, unseen.total);
+  const belief = sideOrder.flatMap((color) => ["K", "A", "E", "R", "N", "C", "P"].map((kind) => unseen.counts[color][kind] / total));
+  const turnEvents = state.turnActions.map((event) => toLearningEvent(event, actor, false));
+  const historyEvents = state.turnHistory.flatMap((turn) => turn.actions.map((event, index) =>
+    toLearningEvent(event, actor, index === turn.actions.length - 1)
+  )).slice(-32);
   return {
-    board,
-    pool: {
-      own: { ...ownPool },
-      opponent: { ...opponentPool },
-    },
+    boardChannels: Array.from(channels),
+    belief,
+    turnEvents,
+    historyEvents,
+    ownActor: actor,
     comboActive: Boolean(activeCombo),
     comboIndex: activeCombo ? activeCombo.r * COLS + activeCombo.c : -1,
+  };
+}
+
+function toLearningEvent(event, actor, turnBoundary) {
+  const mover = event.source && state.board[event.source.r] ? state.board[event.source.r][event.source.c] : null;
+  let revealSide = null;
+  if (event.revealedColor && state.playerColor[actor]) revealSide = event.revealedColor === state.playerColor[actor] ? "own" : "opponent";
+  return {
+    actor: event.actor,
+    kind: event.kind,
+    action: event.action ? [...event.action] : null,
+    source: event.source ? { ...event.source } : null,
+    destination: event.destination ? { ...event.destination } : null,
+    moverKind: event.moverKind || (mover && mover.faceUp ? mover.kind : null),
+    successCapture: Boolean(event.successCapture),
+    revealSide,
+    turnBoundary,
   };
 }
 
@@ -284,6 +391,172 @@ function generateLearningLegalActions(actor, comboPos = null) {
   return generateAllowedOpeningActions(state.board, actor, color);
 }
 
+function generateLearningCandidates(actor, comboPos = null) {
+  return generateLearningLegalActions(actor, comboPos).map((action) => buildLearningCandidate(actor, action));
+}
+
+function buildLearningCandidate(actor, action) {
+  const source = actionSource(action);
+  const destination = actionDestination(action);
+  const mover = source ? state.board[source.r][source.c] : null;
+  const target = destination ? state.board[destination.r][destination.c] : null;
+  return {
+    action: [...action],
+    moverKind: mover && mover.faceUp ? mover.kind : null,
+    targetKind: target && target.faceUp ? target.kind : null,
+    targetHidden: Boolean(target && !target.faceUp),
+    consequence: analyzeLearningCandidate(actor, action),
+  };
+}
+
+function analyzeLearningCandidate(actor, action) {
+  const color = state.playerColor[actor];
+  const enemy = color ? opponentColor(color) : null;
+  const vector = new Float32Array(24);
+  if (!color) return Array.from(vector);
+  const source = actionSource(action);
+  const destination = actionDestination(action);
+  const before = summarizePublicBoard(state.board, color);
+  const branches = learningActionBranches(action, color);
+  for (const branch of branches) {
+    const weight = branch.probability;
+    const after = summarizePublicBoard(branch.board, color);
+    const nextActions = branch.successCapture && branch.finalPos && isComboRuleEnabled()
+      ? generateCaptureActionsFrom(branch.board, color, branch.finalPos, { includeDark: true })
+      : [];
+    const turnEnds = action[0] === "stop" || !branch.successCapture || nextActions.length === 0;
+    const immediateReplies = turnEnds && enemy
+      ? generateActions(branch.board, enemy, { includeFlips: false, includeMoves: false, includeCaptures: true, includeDarkCaptures: false })
+      : [];
+    const finalPiece = branch.finalPos ? branch.board[branch.finalPos.r][branch.finalPos.c] : null;
+    const finalLoss = finalPiece && immediateReplies.some((reply) => reply[3] === branch.finalPos.r && reply[4] === branch.finalPos.c)
+      ? SEARCH_VALUE[finalPiece.kind] : 0;
+    vector[0] += weight * (branch.successCapture ? 1 : 0);
+    vector[1] += weight * (action[0] === "darkCapture" && !branch.successCapture ? 1 : 0);
+    vector[2] += weight * branch.capturedValue / 1000;
+    vector[3] += weight * finalLoss / 1000;
+    vector[4] += weight * (branch.finalPos ? branch.finalPos.r / 3 : 0);
+    vector[5] += weight * (branch.finalPos ? branch.finalPos.c / 7 : 0);
+    vector[6] += weight * after.ownAttackCount / 16;
+    vector[7] += weight * (branch.finalPos ? countPublicSupporters(branch.board, branch.finalPos, color) / 8 : 0);
+    vector[8] += weight * (finalLoss > 0 ? 1 : 0);
+    vector[9] += weight * nextActions.filter((candidate) => candidate[0] === "capture").length / 16;
+    vector[10] += weight * nextActions.filter((candidate) => candidate[0] === "darkCapture").length / 16;
+    vector[11] += weight * (nextActions.length > 0 ? 1 : 0);
+    vector[12] += weight * (after.ownMobility - before.ownMobility) / 32;
+    vector[13] += weight * (after.enemyMobility - before.enemyMobility) / 32;
+    vector[14] += weight * (after.ownCannonLines - before.ownCannonLines) / 16;
+    vector[15] += weight * (after.enemyCannonLines - before.enemyCannonLines) / 16;
+    vector[16] += weight * (after.ownAttackCount - before.ownAttackCount) / 16;
+    vector[17] += weight * (after.ownProtection - before.ownProtection) / 16;
+    vector[18] += weight * (after.enemyAttackCount - before.enemyAttackCount) / 16;
+    vector[19] += weight * (branch.capturedValue - finalLoss) / 1000;
+    vector[20] = 0;
+    vector[21] += weight * learningTerminalValue(branch.board, color);
+    vector[22] += weight * learningRepetitionDelta(branch.board, enemy);
+    vector[23] += weight * (action[0] === "capture" ? 1 : 0);
+  }
+  return Array.from(vector);
+}
+
+function learningActionBranches(action, color) {
+  const source = actionSource(action);
+  const destination = actionDestination(action);
+  const branches = [];
+  if (action[0] === "stop") return [{ probability: 1, board: cloneBoard(state.board), successCapture: false, capturedValue: 0, finalPos: source || (state.combo.active ? { r: state.combo.r, c: state.combo.c } : null) }];
+  if (action[0] === "darkCapture") {
+    const unseen = getUnseenPool(state.board, state.captured);
+    const total = Math.max(1, unseen.total);
+    const original = state.board[destination.r][destination.c];
+    for (const outcomeColor of ["red", "black"]) {
+      for (const kind of ["K", "A", "E", "R", "N", "C", "P"]) {
+        const count = unseen.counts[outcomeColor][kind];
+        if (!count) continue;
+        const board = cloneBoard(state.board);
+        board[destination.r][destination.c] = { ...(original || {}), color: outcomeColor, kind, faceUp: true, id: "belief-piece" };
+        const successCapture = canCapture(board, source, destination);
+        let capturedValue = 0;
+        let finalPos = source;
+        if (successCapture) {
+          capturedValue = SEARCH_VALUE[kind];
+          board[destination.r][destination.c] = board[source.r][source.c];
+          board[source.r][source.c] = null;
+          finalPos = destination;
+        }
+        branches.push({ probability: count / total, board, successCapture, capturedValue, finalPos });
+      }
+    }
+    return branches.length ? branches : [{ probability: 1, board: cloneBoard(state.board), successCapture: false, capturedValue: 0, finalPos: source }];
+  }
+  const board = cloneBoard(state.board);
+  const target = destination ? board[destination.r][destination.c] : null;
+  const result = applyAction(board, action);
+  return [{
+    probability: 1,
+    board,
+    successCapture: Boolean(result.successCapture),
+    capturedValue: result.successCapture && target ? SEARCH_VALUE[target.kind] : 0,
+    finalPos: result.lastMove || destination || source,
+  }];
+}
+
+function summarizePublicBoard(board, color) {
+  const enemy = opponentColor(color);
+  const ownActions = generateActions(board, color, { includeFlips: false, includeMoves: true, includeCaptures: true, includeDarkCaptures: false });
+  const enemyActions = generateActions(board, enemy, { includeFlips: false, includeMoves: true, includeCaptures: true, includeDarkCaptures: false });
+  let ownProtection = 0;
+  let ownCannonLines = 0;
+  let enemyCannonLines = 0;
+  for (let r = 0; r < ROWS; r += 1) for (let c = 0; c < COLS; c += 1) {
+    const piece = board[r][c];
+    if (!piece || !piece.faceUp) continue;
+    if (piece.color === color) ownProtection += countPublicSupporters(board, { r, c }, color);
+    if (piece.kind === "C") {
+      const lines = generateCaptureActionsFrom(board, piece.color, { r, c }, { includeDark: true }).length;
+      if (piece.color === color) ownCannonLines += lines;
+      else enemyCannonLines += lines;
+    }
+  }
+  return {
+    ownMobility: ownActions.length,
+    enemyMobility: enemyActions.length,
+    ownAttackCount: ownActions.filter((action) => action[0] === "capture").length,
+    enemyAttackCount: enemyActions.filter((action) => action[0] === "capture").length,
+    ownProtection,
+    ownCannonLines,
+    enemyCannonLines,
+  };
+}
+
+function countPublicAttackers(board, destination, color) {
+  const target = board[destination.r] ? board[destination.r][destination.c] : null;
+  if (!target || !target.faceUp || target.color === color) return 0;
+  let count = 0;
+  for (let r = 0; r < ROWS; r += 1) for (let c = 0; c < COLS; c += 1) {
+    const piece = board[r][c];
+    if (piece && piece.faceUp && piece.color === color && canCapture(board, { r, c }, destination)) count += 1;
+  }
+  return count;
+}
+
+function countPublicSupporters(board, destination, color) {
+  const target = board[destination.r] ? board[destination.r][destination.c] : null;
+  if (!target || !target.faceUp || target.color !== color) return 0;
+  return visibleFriendlySupport(board, destination, color);
+}
+
+function learningTerminalValue(board, color) {
+  const winner = checkWinner(board);
+  if (winner === color) return 1;
+  if (winner === opponentColor(color)) return -1;
+  return 0;
+}
+
+function learningRepetitionDelta(board, nextColor) {
+  const key = visiblePositionKey(board, nextColor);
+  return Math.min(1, (state.positionCounts[key] || 0) / REPETITION_LIMIT);
+}
+
 function renderLearningStats(stats = null) {
   const modelStats = stats || (
     window.DarkChessLearning
@@ -293,7 +566,8 @@ function renderLearningStats(stats = null) {
   if (!modelStats || !dom.learningModelStatus) return;
 
   const statusLabels = {
-    untrained: "尚未訓練",
+    loading: "載入中",
+    "base-ready": "基礎模型已就緒",
     training: "更新中",
     ready: "已更新",
     error: "更新失敗",
@@ -308,7 +582,27 @@ function renderLearningStats(stats = null) {
   dom.learningDecisionCount.textContent = `${modelStats.learnedDecisions || 0} 步`;
   dom.learningModelSize.textContent = formatLearningBytes(modelStats.modelBytes || 0);
   dom.learningDataSize.textContent = formatLearningBytes(modelStats.learningDataBytes || 0);
+  dom.learningBaseVersion.textContent = modelStats.baseVersion || "—";
+  dom.learningPersonalVersion.textContent = `v${modelStats.personalVersion || 0}（槽 ${String(modelStats.activeSlot || "a").toUpperCase()}）`;
+  dom.learningApprovalCount.textContent = `${modelStats.approvals || 0} 步`;
+  dom.learningCorrectionCount.textContent = `${modelStats.corrections || 0} 步`;
+  dom.learningDemoCount.textContent = `${modelStats.demonstrations || 0} 步`;
+  dom.learningParamCount.textContent = `${Number(modelStats.modelParams || 0).toLocaleString("zh-TW")} 個`;
+  const metrics = modelStats.metrics || {};
+  dom.learningTop1.textContent = formatLearningRate(metrics.all && metrics.all.top1, metrics.all && metrics.all.count);
+  dom.learningTop3.textContent = formatLearningRate(metrics.all && metrics.all.top3, metrics.all && metrics.all.count);
+  dom.learningRecentTop1.textContent = formatLearningRate(metrics.recent20 && metrics.recent20.top1, metrics.recent20 && metrics.recent20.count);
+  dom.learningComboTop1.textContent = formatLearningRate(metrics.combo && metrics.combo.top1, metrics.combo && metrics.combo.count);
+  dom.learningDarkTop1.textContent = formatLearningRate(metrics.darkCapture && metrics.darkCapture.top1, metrics.darkCapture && metrics.darkCapture.count);
+  dom.learningStopTop1.textContent = formatLearningRate(metrics.stop && metrics.stop.top1, metrics.stop && metrics.stop.count);
+  dom.learningSequenceExact.textContent = `${formatPercent(metrics.sequenceExact || 0)}／前綴 ${formatPercent(metrics.sequencePrefix || 0)}`;
+  dom.learningInferenceTime.textContent = `平均 ${Math.round(modelStats.averageInferenceMs || 0)}／P95 ${Math.round(modelStats.p95InferenceMs || 0)} ms`;
+  dom.learningTrainingInfo.textContent = `${modelStats.lastTrainingRows || 0} 筆／${Math.round(modelStats.lastTrainingMs || 0)} ms`;
+  dom.learningPersistence.textContent = modelStats.persistenceGranted ? "已取得持久儲存" : "一般網站儲存";
 }
+
+function formatPercent(value) { return `${(Math.max(0, Number(value) || 0) * 100).toFixed(1)}%`; }
+function formatLearningRate(value, count) { return `${formatPercent(value)}（${Number(count) || 0}）`; }
 
 function formatLearningDate(value) {
   const date = new Date(value);
@@ -331,6 +625,42 @@ function formatLearningBytes(bytes) {
   return `${(value / (1024 * 1024)).toFixed(2)} MB（${value.toLocaleString("zh-TW")} B）`;
 }
 
+async function exportLearningArchive() {
+  if (!window.DarkChessLearning) return;
+  try {
+    const blob = await window.DarkChessLearning.exportArchive();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `dark-chess-learning-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast("模型與棋譜已匯出");
+  } catch {
+    showToast("匯出失敗");
+  }
+}
+
+async function importLearningArchive(event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = "";
+  if (!file || !window.DarkChessLearning) return;
+  try {
+    await window.DarkChessLearning.importArchive(file);
+    renderLearningStats();
+    showToast("模型與棋譜已匯入");
+  } catch {
+    showToast("匯入檔案無法使用");
+  }
+}
+
+async function rollbackLearningModel() {
+  if (!window.DarkChessLearning) return;
+  const restored = await window.DarkChessLearning.rollbackModel();
+  renderLearningStats();
+  showToast(restored ? "已切回上一個模型槽" : "目前沒有可回復的模型槽");
+}
+
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -342,6 +672,7 @@ function getButton(r, c) { return dom.board.querySelector(`button[data-r="${r}"]
 
 function render() {
   if (!state) return;
+  const correctionInput = isCorrectionInputActive();
   const legalTargets = new Set();
   const selected = state.combo.active ? { r: state.combo.r, c: state.combo.c } : state.selected;
   if (selected && state.turnColor) {
@@ -377,7 +708,7 @@ function render() {
       }
       if (state.combo.active && state.combo.r === r && state.combo.c === c) cell.classList.add("combo-anchor");
 
-      btn.disabled = state.aiThinking || state.locked || state.currentPlayer === AI;
+      btn.disabled = state.locked || (state.aiThinking && !correctionInput) || (state.currentPlayer === AI && !correctionInput);
       btn.className = "piece-btn";
       btn.textContent = "";
       if (!piece) {
@@ -402,8 +733,8 @@ function render() {
 
   dom.humanColorLabel.textContent = colorLabel(state.playerColor[HUMAN]);
   dom.aiColorLabel.textContent = colorLabel(state.playerColor[AI]);
-  dom.turnOrb.textContent = state.turnColor === null ? "先翻" : state.combo.active && state.currentPlayer === HUMAN ? "連吃" : state.currentPlayer === HUMAN ? "您" : "AI";
-  dom.endTurnBtn.classList.toggle("hidden", !(state.combo.active && state.currentPlayer === HUMAN && !state.aiThinking && !state.locked));
+  dom.turnOrb.textContent = state.turnColor === null ? "先翻" : correctionInput ? "示範" : state.combo.active && state.currentPlayer === HUMAN ? "連吃" : state.currentPlayer === HUMAN ? "您" : "AI";
+  dom.endTurnBtn.classList.toggle("hidden", !(state.combo.active && !state.locked && (correctionInput || (state.currentPlayer === HUMAN && !state.aiThinking))));
   renderGraveyard();
 }
 
@@ -497,8 +828,98 @@ function showToast(message) {
   toastTimer = window.setTimeout(() => dom.toast.classList.add("hidden"), 1500);
 }
 
+function showCorrectionPanel(message, inputActive = false) {
+  dom.correctionText.textContent = message;
+  dom.correctionPanel.classList.remove("hidden");
+  dom.correctionPanel.classList.toggle("input-active", inputActive);
+}
+
+function hideCorrectionPanel() {
+  if (!dom.correctionPanel) return;
+  dom.correctionPanel.classList.add("hidden");
+  dom.correctionPanel.classList.remove("input-active");
+}
+
+function requestAiCorrection(choice, comboPos) {
+  if (!state || !state.correction) return Promise.resolve("approve");
+  state.correction.proposedAction = [...choice.action];
+  state.correction.proposalContext = choice.context;
+  state.correction.inputMode = null;
+  state.pendingAction = [...choice.action];
+  state.actionViz = buildActionViz(AI, choice.action, null, "preview");
+  showCorrectionPanel(comboPos ? "AI 的下一段連吃" : "AI 打算走這一步");
+  render();
+  return new Promise((resolve) => { state.correction.resolveProposal = resolve; });
+}
+
+function resolveAiCorrection(response) {
+  if (!state || !state.correction || typeof state.correction.resolveProposal !== "function") return;
+  const resolve = state.correction.resolveProposal;
+  state.correction.resolveProposal = null;
+  state.pendingAction = null;
+  hideCorrectionPanel();
+  resolve(response);
+}
+
+function beginCorrectionInput(mode, context, rejectedAction, comboPos) {
+  state.correction.inputMode = mode;
+  state.correction.inputContext = context;
+  state.correction.rejectedAction = rejectedAction ? [...rejectedAction] : null;
+  state.selected = null;
+  state.combo = comboPos ? { active: true, r: comboPos.r, c: comboPos.c } : { active: false, r: null, c: null };
+  showCorrectionPanel(mode === "change" ? "請示範這一個原子行動" : "本回合由您示範", true);
+  render();
+  return new Promise((resolve) => { state.correction.resolveInput = resolve; });
+}
+
+async function completeCorrectionInput(action, result) {
+  if (!state || !state.correction || !state.correction.inputMode) return false;
+  const mode = state.correction.inputMode;
+  const context = state.correction.inputContext;
+  const rejectedAction = state.correction.rejectedAction;
+  try {
+    await window.DarkChessLearning.recordChoice(state.learningGame, context, action, {
+      labelType: mode === "change" ? "correction" : "demonstration",
+      source: mode === "change" ? "change-one-step" : "take-over-turn",
+      rejectedAction: mode === "change" ? rejectedAction : null,
+      turnId: currentLearningTurnId(),
+      combo: state.combo.active,
+      comboStep: state.learningSequenceIndex,
+      sequenceIndex: state.learningSequenceIndex++,
+      phase: learningPhaseLabel(),
+    });
+  } catch {
+    showToast("這一步已執行，學習紀錄保存失敗");
+  }
+  const resolve = state.correction.resolveInput;
+  state.correction.resolveInput = null;
+  state.correction.inputMode = null;
+  state.correction.inputContext = null;
+  state.correction.rejectedAction = null;
+  state.selected = null;
+  state.combo = { active: false, r: null, c: null };
+  hideCorrectionPanel();
+  render();
+  if (typeof resolve === "function") resolve({ action: [...action], result });
+  return true;
+}
+
+function cancelAiCorrection() {
+  if (!state || !state.correction) return;
+  if (typeof state.correction.resolveProposal === "function") state.correction.resolveProposal("cancel");
+  if (typeof state.correction.resolveInput === "function") state.correction.resolveInput({ cancelled: true });
+  state.correction.resolveProposal = null;
+  state.correction.resolveInput = null;
+  state.correction.inputMode = null;
+  state.correction.takeOver = false;
+  state.pendingAction = null;
+  hideCorrectionPanel();
+}
+
 async function onCellClick(r, c) {
-  if (!state || state.aiThinking || state.locked || state.currentPlayer === AI) return;
+  const correctionInput = isCorrectionInputActive();
+  if (!state || state.locked || (state.aiThinking && !correctionInput) || (state.currentPlayer === AI && !correctionInput)) return;
+  const actor = correctionInput ? AI : HUMAN;
   const piece = state.board[r][c];
 
   if (state.combo.active) {
@@ -507,27 +928,27 @@ async function onCellClick(r, c) {
     if (!piece) { showToast("連吃中不能移動到空格。"); return; }
     state.selected = src;
     render();
-    await tryMoveOrCapture(src, { r, c });
+    await tryMoveOrCapture(src, { r, c }, actor);
     return;
   }
 
   if (!piece) {
-    if (state.selected) await tryMoveOrCapture(state.selected, { r, c });
+    if (state.selected) await tryMoveOrCapture(state.selected, { r, c }, actor);
     return;
   }
 
   if (!piece.faceUp) {
     if (state.selected) {
-      await tryMoveOrCapture(state.selected, { r, c });
+      await tryMoveOrCapture(state.selected, { r, c }, actor);
       return;
     }
-    const result = await performVisibleAction(["flip", r, c], HUMAN, { preview: false });
-    if (state.turnColor === null) {
-      state.playerColor[HUMAN] = piece.color;
-      state.playerColor[AI] = opponentColor(piece.color);
-      state.turnColor = state.playerColor[HUMAN];
+    const action = ["flip", r, c];
+    const result = await performVisibleAction(action, actor, { preview: false });
+
+    if (!result.invalid) {
+      if (correctionInput) await completeCorrectionInput(action, result);
+      else endTurn();
     }
-    if (!result.invalid) endTurn();
     return;
   }
 
@@ -540,11 +961,11 @@ async function onCellClick(r, c) {
     return;
   }
 
-  if (state.selected) await tryMoveOrCapture(state.selected, { r, c });
+  if (state.selected) await tryMoveOrCapture(state.selected, { r, c }, actor);
   else showToast("請先選取自己的明棋。");
 }
 
-async function tryMoveOrCapture(src, dst) {
+async function tryMoveOrCapture(src, dst, actor = HUMAN) {
   const moving = state.board[src.r][src.c];
   const target = state.board[dst.r][dst.c];
   const inCombo = state.combo.active;
@@ -557,13 +978,17 @@ async function tryMoveOrCapture(src, dst) {
     if (inCombo) { showToast("連吃給的是食用機會，不能移動到空格。"); return; }
     if (!canMoveToEmpty(state.board, src, dst)) { showToast("一般移動只能上下左右一格。"); return; }
     const action = ["move", src.r, src.c, dst.r, dst.c];
-    const policy = evaluateHumanOpeningPolicy(state.board, action);
+    const policy = actor === HUMAN
+      ? evaluateHumanOpeningPolicy(state.board, action)
+      : evaluateAiOpeningPolicy(state.board, action, state.playerColor[AI], state.playerColor[HUMAN]);
     if (policy.forbidden) {
-      rejectHumanPerpetualChase();
+      if (actor === HUMAN) rejectHumanPerpetualChase();
+      else showToast("這一步會觸發重複局面限制");
       return;
     }
-    const result = await performVisibleAction(action, HUMAN);
-    afterHumanAction(result);
+    const result = await performVisibleAction(action, actor);
+    if (actor === AI && isCorrectionInputActive()) await completeCorrectionInput(action, result);
+    else afterHumanAction(result);
     return;
   }
 
@@ -573,15 +998,19 @@ async function tryMoveOrCapture(src, dst) {
       showToast(moving.kind === "C" ? "炮／包食用必須跳吃。" : "一般棋只能食用相鄰暗棋。");
       return;
     }
-    const result = await performVisibleAction(["darkCapture", src.r, src.c, dst.r, dst.c], HUMAN);
-    afterHumanAction(result);
+    const action = ["darkCapture", src.r, src.c, dst.r, dst.c];
+    const result = await performVisibleAction(action, actor);
+    if (actor === AI && isCorrectionInputActive()) await completeCorrectionInput(action, result);
+    else afterHumanAction(result);
     return;
   }
 
   if (target.color === moving.color) { showToast("不能吃自己的棋。"); return; }
   if (!canCapture(state.board, src, dst)) { showToast("這顆棋不能這樣吃。"); return; }
-  const result = await performVisibleAction(["capture", src.r, src.c, dst.r, dst.c], HUMAN);
-  afterHumanAction(result);
+  const action = ["capture", src.r, src.c, dst.r, dst.c];
+  const result = await performVisibleAction(action, actor);
+  if (actor === AI && isCorrectionInputActive()) await completeCorrectionInput(action, result);
+  else afterHumanAction(result);
 }
 
 function afterHumanAction(result) {
@@ -604,6 +1033,7 @@ function afterHumanAction(result) {
 }
 
 function endTurn() {
+  hideCorrectionPanel();
   state.selected = null;
   state.combo = { active: false, r: null, c: null };
   if (state.turnColor === null) { render(); setStatus("請先翻棋", ""); return; }
@@ -611,7 +1041,10 @@ function endTurn() {
   const finishedPlayer = state.currentPlayer;
   const nextPlayer = finishedPlayer === HUMAN ? AI : HUMAN;
   const nextColor = state.playerColor[nextPlayer];
+  persistCurrentLearningTurn(false);
   finalizeTurnHistory(finishedPlayer, nextColor);
+  state.learningTurnNumber += 1;
+  state.learningSequenceIndex = 0;
 
   state.currentPlayer = nextPlayer;
   state.turnColor = nextColor;
@@ -647,135 +1080,103 @@ async function aiMove() {
   if (!state) return;
   const runId = aiRunId + 1;
   aiRunId = runId;
-  const comboEnabled = isComboRuleEnabled();
+  let comboPos = null;
+  let takeOver = false;
+  let guard = 0;
 
-  const openingChoice = chooseLearnedAiAction();
-  const action = openingChoice ? openingChoice.action : null;
-  if (!isAiRunActive(runId)) return;
-  if (!action) {
-    state.aiThinking = false;
-    state.locked = true;
-    state.pendingAction = null;
-    render();
-    finishCurrentLearningGame("completed", "human_win");
-    showModal("遊戲結束", "您獲勝。");
-    return;
-  }
+  while (guard < MAX_COMBO_STEPS + 1) {
+    guard += 1;
+    let choice = null;
+    let action = null;
+    let result = null;
 
-  let result = await performVisibleAction(action, AI, {
-    runId,
-    stepStartedAt: nowMs() - (openingChoice.totalElapsedMs || 0),
-  });
-  if (!isAiRunActive(runId)) return;
-  let winner = checkWinner(state.board);
-  if (winner !== null) { state.aiThinking = false; state.pendingAction = null; render(); showWinner(winner); return; }
-
-  if (comboEnabled && result.successCapture && result.lastMove) {
-    let pos = { r: result.lastMove.r, c: result.lastMove.c };
-    let guard = 0;
-    while (guard < MAX_COMBO_STEPS) {
-      guard += 1;
-      const comboChoice = chooseLearnedAiAction(pos);
+    if (takeOver) {
+      const candidates = generateLearningCandidates(AI, comboPos);
+      if (!candidates.length) break;
+      const context = await window.DarkChessLearning.prepareDecision(buildLearningObservation(AI, comboPos), candidates);
       if (!isAiRunActive(runId)) return;
-      if (!comboChoice || comboChoice.action[0] === "stop") break;
-      result = await performVisibleAction(comboChoice.action, AI, {
-        runId,
-        combo: true,
-        stepStartedAt: nowMs() - (comboChoice.totalElapsedMs || 0),
-      });
+      const demonstrated = await beginCorrectionInput("takeover", context, null, comboPos);
+      if (!isAiRunActive(runId) || demonstrated.cancelled) return;
+      action = demonstrated.action;
+      result = demonstrated.result;
+    } else {
+      choice = await chooseLearnedAiAction(comboPos);
       if (!isAiRunActive(runId)) return;
-      winner = checkWinner(state.board);
-      if (winner !== null) { state.aiThinking = false; state.pendingAction = null; render(); showWinner(winner); return; }
-      if (!result.successCapture || !result.lastMove) break;
-      pos = { r: result.lastMove.r, c: result.lastMove.c };
+      if (!choice || !choice.action) break;
+      action = choice.action;
+
+      if (loadCorrectionMode()) {
+        const response = await requestAiCorrection(choice, comboPos);
+        if (!isAiRunActive(runId) || response === "cancel") return;
+        if (response === "approve") {
+          await window.DarkChessLearning.recordChoice(state.learningGame, choice.context, action, {
+            labelType: "approval",
+            source: "approved-ai-proposal",
+            turnId: currentLearningTurnId(),
+            combo: Boolean(comboPos),
+            comboStep: state.learningSequenceIndex,
+            sequenceIndex: state.learningSequenceIndex++,
+            phase: learningPhaseLabel(),
+          });
+        } else {
+          takeOver = response === "takeover";
+          const demonstrated = await beginCorrectionInput(
+            takeOver ? "takeover" : "change",
+            choice.context,
+            takeOver ? null : action,
+            comboPos
+          );
+          if (!isAiRunActive(runId) || demonstrated.cancelled) return;
+          action = demonstrated.action;
+          result = demonstrated.result;
+        }
+      }
+
+      if (!result && action[0] === "stop") {
+        result = { type: "stop", successCapture: false, captured: null, lastMove: null, invalid: false };
+        recordTurnAction(AI, action, result, {});
+      } else if (!result) {
+        result = await performVisibleAction(action, AI, {
+          runId,
+          combo: Boolean(comboPos),
+          stepStartedAt: nowMs() - (choice.totalElapsedMs || 0),
+        });
+      }
     }
+
+    if (!isAiRunActive(runId)) return;
+    const winner = checkWinner(state.board);
+    if (winner !== null) { state.aiThinking = false; state.pendingAction = null; render(); showWinner(winner); return; }
+    if (action[0] === "stop") break;
+    if (!isComboRuleEnabled() || !result.successCapture || !result.lastMove) break;
+    comboPos = { r: result.lastMove.r, c: result.lastMove.c };
+    if (!hasCaptureOpportunityFrom(state.board, state.playerColor[AI], comboPos, { includeDark: true })) break;
   }
 
   state.pendingAction = null;
   state.aiThinking = false;
+  state.correction.takeOver = false;
   endTurn();
 }
 
-function chooseLearnedAiAction(comboPos = null) {
-  if (!state || !state.playerColor[AI]) return null;
+async function chooseLearnedAiAction(comboPos = null) {
+  if (!state) return null;
   const startedAt = nowMs();
-  const legalActions = generateLearningLegalActions(AI, comboPos);
-  if (legalActions.length === 0) return null;
-
-  const difficulty = loadDifficulty();
-  const fallbackScores = [];
-  for (const action of legalActions) {
-    fallbackScores.push(fastFallbackActionScore(action, state.playerColor[AI], difficulty));
-    if (nowMs() - startedAt >= AI_MODEL_DECISION_BUDGET_MS) break;
-  }
-  while (fallbackScores.length < legalActions.length) fallbackScores.push(0);
-
-  let choice = null;
-  if (window.DarkChessLearning && nowMs() - startedAt < AI_MODEL_DECISION_BUDGET_MS) {
-    choice = window.DarkChessLearning.chooseAction(
-      buildLearningSnapshot(AI, comboPos),
-      legalActions,
-      fallbackScores
-    );
-  }
-
-  if (!choice || nowMs() - startedAt >= AI_MODEL_DECISION_BUDGET_MS) {
-    let bestIndex = 0;
-    for (let index = 1; index < legalActions.length; index += 1) {
-      if (fallbackScores[index] > fallbackScores[bestIndex]) bestIndex = index;
-    }
-    choice = {
-      action: [...legalActions[bestIndex]],
-      confidence: 0,
-      styleWeight: 0,
-      elapsedMs: nowMs() - startedAt,
-    };
-  }
+  const candidates = generateLearningCandidates(AI, comboPos);
+  if (candidates.length === 0 || !window.DarkChessLearning) return null;
+  const choice = await window.DarkChessLearning.chooseAction(buildLearningObservation(AI, comboPos), candidates);
+  if (!choice) return null;
 
   state.aiSearchInfo = {
-    engine: "online-imitation-policy",
+    engine: "tactical-imitation-v2",
     elapsedMs: Math.round(nowMs() - startedAt),
     learnedGames: window.DarkChessLearning ? window.DarkChessLearning.getStats().learnedGames : 0,
     learnedDecisions: window.DarkChessLearning ? window.DarkChessLearning.getStats().learnedDecisions : 0,
-    styleWeight: choice.styleWeight,
     confidence: choice.confidence,
-    candidates: legalActions.length,
+    candidates: candidates.length,
   };
   choice.totalElapsedMs = nowMs() - startedAt;
   return choice;
-}
-
-function fastFallbackActionScore(action, actorColor, difficulty) {
-  const safetyWeight = {
-    easy: 0.55,
-    normal: 0.8,
-    hard: 1,
-    master: 1.15,
-  }[difficulty] || 0.8;
-  const kind = action[0];
-  if (kind === "stop") return 24;
-  if (kind === "flip") {
-    return 40 - centerDistance(action[1], action[2]) * 3;
-  }
-  if (kind === "darkCapture") {
-    const attacker = state.board[action[1]][action[2]];
-    return 58 - (attacker ? SEARCH_VALUE[attacker.kind] * 0.025 * safetyWeight : 0);
-  }
-
-  const nextBoard = cloneBoard(state.board);
-  const destination = { r: action[3], c: action[4] };
-  const target = state.board[destination.r][destination.c];
-  const result = applyAction(nextBoard, action);
-  if (result.invalid) return -SEARCH_MATE;
-  const exposedLoss = immediateKnownLossOnSquare(nextBoard, destination, actorColor);
-  const centerBonus = 18 - centerDistance(destination.r, destination.c) * 3;
-
-  if (kind === "capture") {
-    const capturedValue = target ? SEARCH_VALUE[target.kind] : 0;
-    const winning = checkWinner(nextBoard) === actorColor ? 100_000 : 0;
-    return winning + 220 + capturedValue - exposedLoss * safetyWeight + centerBonus;
-  }
-  return 70 - exposedLoss * safetyWeight + centerBonus;
 }
 
 function isAiRunActive(runId) { return Boolean(state && state.aiThinking && state.currentPlayer === AI && runId === aiRunId); }
@@ -803,6 +1204,18 @@ async function performVisibleAction(action, actor, options = {}) {
   }
 
   const result = applyAction(state.board, action);
+  if (action[0] === "flip" && state.turnColor === null) {
+    const [, r, c] = action;
+    const flippedPiece = state.board[r][c];
+
+    if (flippedPiece) {
+      const opponentActor = actor === HUMAN ? AI : HUMAN;
+
+      state.playerColor[actor] = flippedPiece.color;
+      state.playerColor[opponentActor] = opponentColor(flippedPiece.color);
+      state.turnColor = flippedPiece.color;
+    }
+  }
   if (result.captured) {
     const captured = { ...result.captured, faceUp: true };
     state.captured.push(captured);
@@ -960,749 +1373,6 @@ function generateCaptureActionsFrom(board, color, src, options = {}) {
 
 function hasCaptureOpportunityFrom(board, color, src, options = {}) { return generateCaptureActionsFrom(board, color, src, options).length > 0; }
 function generateNonFlipActions(board, color) { return generateActions(board, color, { includeFlips: false, includeMoves: true, includeCaptures: true, includeDarkCaptures: false }); }
-function cloneCaptured(captured) { return (captured || []).map((piece) => ({ ...piece, faceUp: true })); }
-
-/*
- * Dark Chess AI engine — certainty-first expectiminimax
- *
- * Invariants:
- * 1. Face-down identities are never inspected. Only the remaining public pool is used.
- * 2. A deterministic, profitable known capture receives a guaranteed tactical floor.
- * 3. Continuing a capture chain can never reduce the value of stopping immediately.
- * 4. Chance search compares complete public outcomes; random exploration cannot overrule
- *    a clearly superior deterministic tactic.
- * 5. Visible captures are always retained when action lists are shortened.
- */
-
-const AI_CACHE_LIMIT = 45_000;
-const AI_TIME_CHECK_MASK = 63;
-const AI_SAFE_CAPTURE_MIN_NET = 70;
-const AI_SAFE_CAPTURE_TOLERANCE = 45;
-const AI_MATE_DISTANCE_STEP = 120;
-
-let aiPersistentCache = new Map();
-
-function resetAiSearchEngine() {
-  aiPersistentCache = new Map();
-}
-
-async function findBestAction(board, aiColor, humanColor, diff, options = {}) {
-  const result = await certaintyFirstSearch(board, aiColor, humanColor, diff, {
-    captured: cloneCaptured(options.captured || (state ? state.captured : [])),
-    comboEnabled: Boolean(options.includeDarkCaptures),
-    comboPos: null,
-    comboSteps: 0,
-    thinkMs: options.thinkMs,
-    seed: options.seed,
-  });
-  return result ? result.action : null;
-}
-
-async function chooseBestComboAction(board, aiColor, humanColor, pos, diff, options = {}) {
-  const result = await certaintyFirstSearch(board, aiColor, humanColor, diff, {
-    captured: cloneCaptured(options.captured || (state ? state.captured : [])),
-    comboEnabled: true,
-    comboPos: pos ? { r: pos.r, c: pos.c } : null,
-    comboSteps: Number.isFinite(options.comboSteps) ? options.comboSteps : 1,
-    thinkMs: options.thinkMs ?? diff.comboThinkMs,
-    seed: options.seed,
-  });
-  if (!result || !result.action || result.action[0] === "stop") return null;
-  return { action: result.action, score: result.score, stats: result.stats };
-}
-
-async function certaintyFirstSearch(board, aiColor, humanColor, diff, options = {}) {
-  const searchId = `${Date.now()}-${Math.random()}`;
-  const startedAt = nowMs();
-  const budgetMs = Math.max(40, Number.isFinite(options.thinkMs) ? options.thinkMs : diff.thinkMs);
-  const ctx = {
-    searchId,
-    rootColor: aiColor,
-    opponentColor: humanColor,
-    diff,
-    deadline: startedAt + budgetMs,
-    nodes: 0,
-    chanceNodes: 0,
-    cacheHits: 0,
-    depthCompleted: 0,
-    rng: createSeededRng(Number.isFinite(options.seed)
-      ? options.seed
-      : mixSeed(hashString32(visiblePositionKey(board, aiColor)), Math.floor(startedAt))),
-    localCache: new Map(),
-  };
-
-  const root = createCertaintyState({
-    board: cloneBoard(board),
-    captured: cloneCaptured(options.captured || []),
-    currentColor: aiColor,
-    comboEnabled: Boolean(options.comboEnabled),
-    comboPos: options.comboPos ? { ...options.comboPos } : null,
-    comboSteps: options.comboSteps || 0,
-    positionCounts: state && state.positionCounts ? state.positionCounts : null,
-  });
-
-  let rootActions = generateCertaintyActions(root, ctx, true);
-  if (rootActions.length === 0) return null;
-
-  const rootRows = prepareCertaintyRows(root, rootActions, ctx, true);
-  rootActions = applyKnownCaptureGate(root, rootRows, ctx);
-  const selectedKeys = new Set(rootActions.map((row) => row.key));
-  const candidateRows = rootRows.filter((row) => selectedKeys.has(row.key));
-
-  let bestCompleted = candidateRows.map((row) => ({
-    ...row,
-    score: row.priorScore,
-    depth: 0,
-  }));
-
-  for (let depth = 1; depth <= diff.maxDepth; depth += 1) {
-    const depthRows = [];
-    let completed = true;
-    const ordered = [...bestCompleted]
-      .sort((a, b) => b.score - a.score || b.priorScore - a.priorScore || a.key.localeCompare(b.key));
-
-    try {
-      for (const previous of ordered) {
-        touchCertaintyNode(ctx, true);
-        const row = candidateRows.find((item) => item.key === previous.key) || previous;
-        const score = evaluateCertaintyAction(root, row.action, depth, -SEARCH_MATE, SEARCH_MATE, ctx, true);
-        depthRows.push({ ...row, score, depth });
-      }
-    } catch (error) {
-      if (error !== SEARCH_TIMEOUT) throw error;
-      completed = false;
-    }
-
-    if (completed && depthRows.length === candidateRows.length) {
-      bestCompleted = depthRows.sort(compareCertaintyRows);
-      ctx.depthCompleted = depth;
-      if (certaintyCanStopEarly(bestCompleted, ctx)) break;
-    }
-
-    if (nowMs() >= ctx.deadline || !completed) break;
-    await yieldAiSearch();
-  }
-
-  bestCompleted.sort(compareCertaintyRows);
-  let best = bestCompleted[0] || null;
-
-  if (root.comboPos) {
-    const stopRow = bestCompleted.find((row) => row.action[0] === "stop")
-      || candidateRows.find((row) => row.action[0] === "stop");
-    if (stopRow && best && best.action[0] !== "stop") {
-      const stopScore = Number.isFinite(stopRow.score) ? stopRow.score : stopRow.priorScore;
-      const margin = comboContinueRequiredMargin(best.action, root, ctx);
-      if (best.score < stopScore + margin) best = { ...stopRow, score: stopScore };
-    }
-  }
-
-  const elapsedMs = Math.max(0, nowMs() - startedAt);
-  const info = {
-    engine: "certainty-first-expectiminimax",
-    depth: ctx.depthCompleted,
-    nodes: ctx.nodes,
-    chanceNodes: ctx.chanceNodes,
-    cacheHits: ctx.cacheHits,
-    elapsedMs: Math.round(elapsedMs),
-    captureGate: candidateRows.length < rootRows.length,
-    candidates: bestCompleted.slice(0, 8).map((row) => ({
-      action: [...row.action],
-      score: Math.round(row.score),
-      prior: Math.round(row.priorScore),
-      guarantee: Number.isFinite(row.guarantee) ? Math.round(row.guarantee) : null,
-      netCapture: Number.isFinite(row.netCapture) ? Math.round(row.netCapture) : null,
-    })),
-  };
-  if (state) state.aiSearchInfo = info;
-
-  trimAiCache();
-  return best ? { action: [...best.action], score: best.score, stats: info } : null;
-}
-
-function createCertaintyState(options) {
-  return {
-    board: options.board,
-    captured: cloneCaptured(options.captured || []),
-    currentColor: options.currentColor,
-    comboEnabled: Boolean(options.comboEnabled),
-    comboPos: options.comboPos ? { ...options.comboPos } : null,
-    comboSteps: options.comboSteps || 0,
-    positionCounts: { ...(options.positionCounts || {}) },
-  };
-}
-
-function cloneCertaintyState(sim) {
-  return createCertaintyState({
-    board: cloneBoard(sim.board),
-    captured: sim.captured,
-    currentColor: sim.currentColor,
-    comboEnabled: sim.comboEnabled,
-    comboPos: sim.comboPos,
-    comboSteps: sim.comboSteps,
-    positionCounts: sim.positionCounts,
-  });
-}
-
-function generateCertaintyActions(sim, ctx, isRoot = false) {
-  let actions;
-  if (sim.comboPos) {
-    actions = [
-      ["stop"],
-      ...generateCaptureActionsFrom(sim.board, sim.currentColor, sim.comboPos, { includeDark: sim.comboEnabled }),
-    ];
-  } else {
-    actions = generateActions(sim.board, sim.currentColor, {
-      includeFlips: true,
-      includeMoves: true,
-      includeCaptures: true,
-      includeDarkCaptures: sim.comboEnabled,
-    });
-  }
-
-  const unique = [];
-  for (const action of actions) {
-    if (action[0] === "move") {
-      if (certaintyMoveForbidden(sim, action)) continue;
-      if (isRoot && sim.currentColor === ctx.rootColor) {
-        const policy = evaluateAiOpeningPolicy(sim.board, action, ctx.rootColor, ctx.opponentColor);
-        if (policy.forbidden) continue;
-      }
-    }
-    if (!unique.some((existing) => sameAction(existing, action))) unique.push(action);
-  }
-  return unique;
-}
-
-function prepareCertaintyRows(sim, actions, ctx, isRoot) {
-  const rows = actions.map((action) => {
-    const details = certaintyActionPrior(sim, action, sim.currentColor, ctx);
-    return {
-      action: [...action],
-      key: actionKey(action),
-      priorScore: details.score,
-      guarantee: details.guarantee,
-      netCapture: details.netCapture,
-      deterministic: details.deterministic,
-    };
-  }).sort((a, b) => b.priorScore - a.priorScore || a.key.localeCompare(b.key));
-
-  const limit = isRoot ? ctx.diff.rootLimit : ctx.diff.nodeActionLimit;
-  if (rows.length <= limit) return rows;
-
-  const selected = [];
-  const add = (row) => {
-    if (row && !selected.some((item) => item.key === row.key)) selected.push(row);
-  };
-
-  for (const row of rows) if (row.action[0] === "capture") add(row);
-  if (sim.comboPos) add(rows.find((row) => row.action[0] === "stop"));
-  for (const type of ["move", "darkCapture", "flip"]) {
-    const typeRows = rows.filter((row) => row.action[0] === type);
-    const quota = type === "flip" ? ctx.diff.flipQuota : type === "darkCapture" ? ctx.diff.darkQuota : ctx.diff.moveQuota;
-    for (const row of typeRows.slice(0, quota)) add(row);
-  }
-  for (const row of rows) {
-    if (selected.length >= limit) break;
-    add(row);
-  }
-  return selected.slice(0, Math.max(limit, selected.filter((row) => row.action[0] === "capture").length));
-}
-
-function applyKnownCaptureGate(sim, rows, ctx) {
-  const captures = rows.filter((row) => row.action[0] === "capture");
-  if (captures.length === 0) return rows;
-
-  const actor = sim.currentColor;
-  const actorMaximizes = actor === ctx.rootColor;
-  const baseline = evaluatePublicPosition(sim, ctx.rootColor, ctx.diff);
-  const enriched = captures.map((row) => {
-    const guaranteeInfo = knownCaptureGuarantee(sim, row.action, ctx);
-    return { ...row, ...guaranteeInfo };
-  });
-
-  const safe = enriched.filter((row) => row.mate || row.netCapture >= AI_SAFE_CAPTURE_MIN_NET);
-  if (safe.length === 0) return rows;
-
-  const bestSafe = [...safe].sort((a, b) => {
-    if (actorMaximizes) return b.guarantee - a.guarantee;
-    return a.guarantee - b.guarantee;
-  })[0];
-
-  const alternatives = rows.filter((row) => row.action[0] !== "capture");
-  let bestAlternative = baseline;
-  for (const row of alternatives) {
-    const value = row.priorScore;
-    bestAlternative = actorMaximizes ? Math.max(bestAlternative, value) : Math.min(bestAlternative, value);
-  }
-
-  const clearlyAtLeastAsGood = actorMaximizes
-    ? bestSafe.guarantee >= bestAlternative - AI_SAFE_CAPTURE_TOLERANCE
-    : bestSafe.guarantee <= bestAlternative + AI_SAFE_CAPTURE_TOLERANCE;
-  if (!bestSafe.mate && !clearlyAtLeastAsGood) return rows;
-
-  const kept = safe.filter((row) => actorMaximizes
-    ? row.guarantee >= bestSafe.guarantee - ctx.diff.captureGateWindow
-    : row.guarantee <= bestSafe.guarantee + ctx.diff.captureGateWindow);
-
-  if (sim.comboPos) {
-    const stop = rows.find((row) => row.action[0] === "stop");
-    if (stop) kept.push(stop);
-  }
-  return kept;
-}
-
-function knownCaptureGuarantee(sim, action, ctx) {
-  const target = sim.board[action[3]][action[4]];
-  const attacker = sim.board[action[1]][action[2]];
-  if (!target || !attacker) return { guarantee: -SEARCH_MATE, netCapture: -SEARCH_MATE, mate: false };
-
-  const next = cloneCertaintyState(sim);
-  const transition = applyDeterministicCertaintyAction(next, action);
-  if (transition.invalid) return { guarantee: -SEARCH_MATE, netCapture: -SEARCH_MATE, mate: false };
-  const winner = publicWinner(next);
-  if (winner === sim.currentColor) {
-    const mateScore = sim.currentColor === ctx.rootColor ? SEARCH_MATE : -SEARCH_MATE;
-    return { guarantee: mateScore, netCapture: SEARCH_MATE, mate: true };
-  }
-
-  if (next.comboPos) endCertaintyTurn(next);
-  const recaptureLoss = immediateKnownLossOnSquare(next.board, { r: action[3], c: action[4] }, sim.currentColor);
-  const netCapture = SEARCH_VALUE[target.kind] - recaptureLoss;
-  const position = evaluateVisibleReplyFloor(next, ctx, 1);
-  const captureBonus = netCapture * (sim.currentColor === ctx.rootColor ? 0.55 : -0.55);
-  return {
-    guarantee: position + captureBonus,
-    netCapture,
-    mate: false,
-  };
-}
-
-function evaluateVisibleReplyFloor(sim, ctx, plies) {
-  if (plies <= 0) return evaluatePublicPosition(sim, ctx.rootColor, ctx.diff);
-  const winner = publicWinner(sim);
-  if (winner !== null) return winner === ctx.rootColor ? SEARCH_MATE : -SEARCH_MATE;
-
-  const captures = generateActions(sim.board, sim.currentColor, {
-    includeFlips: false,
-    includeMoves: false,
-    includeCaptures: true,
-    includeDarkCaptures: false,
-  }).filter((action) => !certaintyMoveForbidden(sim, action));
-  if (captures.length === 0) return evaluatePublicPosition(sim, ctx.rootColor, ctx.diff);
-
-  const maximizing = sim.currentColor === ctx.rootColor;
-  let best = maximizing ? -SEARCH_MATE : SEARCH_MATE;
-  for (const action of captures) {
-    const next = cloneCertaintyState(sim);
-    const transition = applyDeterministicCertaintyAction(next, action);
-    if (transition.invalid) continue;
-    if (next.comboPos) endCertaintyTurn(next);
-    const value = evaluateVisibleReplyFloor(next, ctx, plies - 1);
-    best = maximizing ? Math.max(best, value) : Math.min(best, value);
-  }
-  return best;
-}
-
-function evaluateCertaintyAction(sim, action, depth, alpha, beta, ctx, isRoot = false) {
-  if (action[0] === "flip" || action[0] === "darkCapture") {
-    return evaluateChanceAction(sim, action, depth, alpha, beta, ctx, isRoot);
-  }
-  const next = cloneCertaintyState(sim);
-  const transition = applyDeterministicCertaintyAction(next, action);
-  if (transition.invalid) return sim.currentColor === ctx.rootColor ? -SEARCH_MATE : SEARCH_MATE;
-  const nextDepth = transition.turnEnded ? depth - 1 : depth;
-  return certaintySearchNode(next, nextDepth, alpha, beta, ctx, 0);
-}
-
-function certaintySearchNode(sim, depth, alpha, beta, ctx, extensionDepth) {
-  touchCertaintyNode(ctx);
-  const winner = publicWinner(sim);
-  if (winner !== null) {
-    const distance = Math.max(0, ctx.diff.maxDepth - depth) + extensionDepth;
-    return winner === ctx.rootColor ? SEARCH_MATE - distance * AI_MATE_DISTANCE_STEP : -SEARCH_MATE + distance * AI_MATE_DISTANCE_STEP;
-  }
-
-  if (depth <= 0) return certaintyQuiescence(sim, alpha, beta, ctx, extensionDepth);
-
-  const key = certaintyCacheKey(sim, depth, extensionDepth, ctx.rootColor);
-  const cached = ctx.localCache.get(key) ?? aiPersistentCache.get(key);
-  if (cached !== undefined) {
-    ctx.cacheHits += 1;
-    return cached;
-  }
-
-  const actions = generateCertaintyActions(sim, ctx, false);
-  if (actions.length === 0) return sim.currentColor === ctx.rootColor ? -SEARCH_MATE : SEARCH_MATE;
-  const rows = prepareCertaintyRows(sim, actions, ctx, false);
-  const gated = applyKnownCaptureGate(sim, rows, ctx);
-  const maximizing = sim.currentColor === ctx.rootColor;
-  let best = maximizing ? -SEARCH_MATE : SEARCH_MATE;
-  let exact = true;
-
-  for (const row of gated) {
-    const value = evaluateCertaintyAction(sim, row.action, depth, alpha, beta, ctx, false);
-    if (maximizing) {
-      best = Math.max(best, value);
-      alpha = Math.max(alpha, best);
-    } else {
-      best = Math.min(best, value);
-      beta = Math.min(beta, best);
-    }
-    if (beta <= alpha) {
-      exact = false;
-      break;
-    }
-  }
-
-  if (exact && Number.isFinite(best)) {
-    ctx.localCache.set(key, best);
-    aiPersistentCache.set(key, best);
-  }
-  return best;
-}
-
-function certaintyQuiescence(sim, alpha, beta, ctx, extensionDepth) {
-  touchCertaintyNode(ctx);
-  const stand = evaluatePublicPosition(sim, ctx.rootColor, ctx.diff);
-  if (extensionDepth >= ctx.diff.maxTacticalExtensions) return stand;
-
-  let actions;
-  if (sim.comboPos) {
-    actions = [
-      ["stop"],
-      ...generateCaptureActionsFrom(sim.board, sim.currentColor, sim.comboPos, { includeDark: false }),
-    ];
-  } else {
-    actions = generateActions(sim.board, sim.currentColor, {
-      includeFlips: false,
-      includeMoves: false,
-      includeCaptures: true,
-      includeDarkCaptures: false,
-    });
-  }
-  if (actions.length === 0) return stand;
-
-  const maximizing = sim.currentColor === ctx.rootColor;
-  let best = stand;
-  if (maximizing) alpha = Math.max(alpha, stand);
-  else beta = Math.min(beta, stand);
-  if (beta <= alpha) return stand;
-
-  const rows = prepareCertaintyRows(sim, actions, ctx, false);
-  const gated = applyKnownCaptureGate(sim, rows, ctx);
-  for (const row of gated) {
-    const next = cloneCertaintyState(sim);
-    const transition = applyDeterministicCertaintyAction(next, row.action);
-    if (transition.invalid) continue;
-    const value = certaintyQuiescence(next, alpha, beta, ctx, extensionDepth + 1);
-    if (maximizing) {
-      best = Math.max(best, value);
-      alpha = Math.max(alpha, best);
-    } else {
-      best = Math.min(best, value);
-      beta = Math.min(beta, best);
-    }
-    if (beta <= alpha) break;
-  }
-  return best;
-}
-
-function evaluateChanceAction(sim, action, depth, alpha, beta, ctx, isRoot) {
-  touchCertaintyNode(ctx);
-  ctx.chanceNodes += 1;
-  const outcomes = publicUnseenOutcomes(sim);
-  if (outcomes.length === 0) return sim.currentColor === ctx.rootColor ? -SEARCH_MATE : SEARCH_MATE;
-
-  const ordered = [...outcomes].sort((a, b) => {
-    const aImpact = a.count * SEARCH_VALUE[a.kind];
-    const bImpact = b.count * SEARCH_VALUE[b.kind];
-    return bImpact - aImpact;
-  });
-  const limit = isRoot ? ordered.length : Math.min(ordered.length, ctx.diff.chanceOutcomeLimit);
-  const exactOutcomes = ordered.slice(0, limit);
-  const approximateOutcomes = ordered.slice(limit);
-
-  let expected = 0;
-  let probabilityUsed = 0;
-  for (const outcome of exactOutcomes) {
-    touchCertaintyNode(ctx);
-    const next = cloneCertaintyState(sim);
-    const transition = applyChanceOutcome(next, action, outcome);
-    if (transition.invalid) continue;
-    const nextDepth = transition.turnEnded ? depth - 1 : depth;
-    const value = certaintySearchNode(next, nextDepth, alpha, beta, ctx, 0);
-    expected += outcome.probability * value;
-    probabilityUsed += outcome.probability;
-  }
-
-  for (const outcome of approximateOutcomes) {
-    const next = cloneCertaintyState(sim);
-    const transition = applyChanceOutcome(next, action, outcome);
-    if (transition.invalid) continue;
-    const value = evaluatePublicPosition(next, ctx.rootColor, ctx.diff);
-    expected += outcome.probability * value;
-    probabilityUsed += outcome.probability;
-  }
-
-  if (probabilityUsed <= 0) return evaluatePublicPosition(sim, ctx.rootColor, ctx.diff);
-  return expected / probabilityUsed;
-}
-
-function applyDeterministicCertaintyAction(sim, action) {
-  if (!action) return { invalid: true, turnEnded: false };
-  if (action[0] === "stop") {
-    endCertaintyTurn(sim);
-    return { invalid: false, turnEnded: true, stopped: true };
-  }
-  if (action[0] === "flip" || action[0] === "darkCapture") return { invalid: true, turnEnded: false };
-
-  const result = applyAction(sim.board, action);
-  if (result.invalid) return { invalid: true, turnEnded: false, result };
-  if (result.captured) sim.captured.push({ ...result.captured, faceUp: true });
-
-  const winner = publicWinner(sim);
-  if (winner !== null) return { invalid: false, turnEnded: false, winner, result };
-
-  if (result.successCapture && sim.comboEnabled && result.lastMove && sim.comboSteps < MAX_COMBO_STEPS) {
-    const nextPos = { r: result.lastMove.r, c: result.lastMove.c };
-    if (hasCaptureOpportunityFrom(sim.board, sim.currentColor, nextPos, { includeDark: true })) {
-      sim.comboPos = nextPos;
-      sim.comboSteps += 1;
-      return { invalid: false, turnEnded: false, result };
-    }
-  }
-
-  endCertaintyTurn(sim);
-  return { invalid: false, turnEnded: true, result };
-}
-
-function applyChanceOutcome(sim, action, outcome) {
-  const actorColor = sim.currentColor;
-  if (action[0] === "flip") {
-    const [, r, c] = action;
-    const existing = sim.board[r][c];
-    if (!existing || existing.faceUp) return { invalid: true, turnEnded: false };
-    sim.board[r][c] = {
-      color: outcome.color,
-      kind: outcome.kind,
-      faceUp: true,
-      id: existing.id || `chance-${r}-${c}-${outcome.color}-${outcome.kind}`,
-    };
-    endCertaintyTurn(sim);
-    return { invalid: false, turnEnded: true, revealed: true };
-  }
-
-  if (action[0] === "darkCapture") {
-    const [, sr, sc, dr, dc] = action;
-    const target = sim.board[dr][dc];
-    if (!target || target.faceUp || !canAttemptHiddenCapturePath(sim.board, { r: sr, c: sc }, { r: dr, c: dc })) {
-      return { invalid: true, turnEnded: false };
-    }
-    sim.board[dr][dc] = {
-      color: outcome.color,
-      kind: outcome.kind,
-      faceUp: true,
-      id: target.id || `chance-${dr}-${dc}-${outcome.color}-${outcome.kind}`,
-    };
-
-    if (canCapture(sim.board, { r: sr, c: sc }, { r: dr, c: dc })) {
-      const captured = { ...sim.board[dr][dc], faceUp: true };
-      sim.board[dr][dc] = sim.board[sr][sc];
-      sim.board[sr][sc] = null;
-      sim.captured.push(captured);
-      const winner = publicWinner(sim);
-      if (winner !== null) return { invalid: false, turnEnded: false, winner, successCapture: true };
-      if (sim.comboEnabled && sim.comboSteps < MAX_COMBO_STEPS) {
-        const nextPos = { r: dr, c: dc };
-        if (hasCaptureOpportunityFrom(sim.board, actorColor, nextPos, { includeDark: true })) {
-          sim.comboPos = nextPos;
-          sim.comboSteps += 1;
-          return { invalid: false, turnEnded: false, successCapture: true };
-        }
-      }
-    }
-
-    endCertaintyTurn(sim);
-    return { invalid: false, turnEnded: true, successCapture: false };
-  }
-
-  return { invalid: true, turnEnded: false };
-}
-
-function endCertaintyTurn(sim) {
-  sim.currentColor = opponentColor(sim.currentColor);
-  sim.comboPos = null;
-  sim.comboSteps = 0;
-  const key = visiblePositionKey(sim.board, sim.currentColor);
-  sim.positionCounts[key] = (sim.positionCounts[key] || 0) + 1;
-}
-
-function certaintyActionPrior(sim, action, actorColor, ctx) {
-  const before = evaluatePublicPosition(sim, ctx.rootColor, ctx.diff);
-  const actorSign = actorColor === ctx.rootColor ? 1 : -1;
-
-  if (action[0] === "capture") {
-    const target = sim.board[action[3]][action[4]];
-    const guarantee = knownCaptureGuarantee(sim, action, ctx);
-    const targetValue = target ? SEARCH_VALUE[target.kind] : 0;
-    return {
-      score: guarantee.guarantee + actorSign * targetValue * 0.35,
-      guarantee: guarantee.guarantee,
-      netCapture: guarantee.netCapture,
-      deterministic: true,
-    };
-  }
-
-  if (action[0] === "move" || action[0] === "stop") {
-    const next = cloneCertaintyState(sim);
-    const transition = applyDeterministicCertaintyAction(next, action);
-    if (transition.invalid) return { score: actorSign > 0 ? -SEARCH_MATE : SEARCH_MATE, guarantee: null, netCapture: null, deterministic: true };
-    const after = evaluatePublicPosition(next, ctx.rootColor, ctx.diff);
-    return { score: after + (after - before) * 0.18, guarantee: after, netCapture: null, deterministic: true };
-  }
-
-  const expected = expectedImmediateChanceValue(sim, action, ctx);
-  return { score: expected, guarantee: null, netCapture: null, deterministic: false };
-}
-
-function expectedImmediateChanceValue(sim, action, ctx) {
-  const outcomes = publicUnseenOutcomes(sim);
-  if (outcomes.length === 0) return evaluatePublicPosition(sim, ctx.rootColor, ctx.diff);
-  let total = 0;
-  for (const outcome of outcomes) {
-    const next = cloneCertaintyState(sim);
-    const transition = applyChanceOutcome(next, action, outcome);
-    if (transition.invalid) continue;
-    total += outcome.probability * evaluatePublicPosition(next, ctx.rootColor, ctx.diff);
-  }
-  const uncertaintyPenalty = action[0] === "darkCapture" ? ctx.diff.darkRiskPenalty : ctx.diff.flipRiskPenalty;
-  const actorSign = sim.currentColor === ctx.rootColor ? 1 : -1;
-  return total - actorSign * uncertaintyPenalty;
-}
-
-function evaluatePublicPosition(sim, perspectiveColor, diff) {
-  const winner = publicWinner(sim);
-  if (winner !== null) return winner === perspectiveColor ? SEARCH_MATE : -SEARCH_MATE;
-
-  const opponent = opponentColor(perspectiveColor);
-  const pool = getUnseenPool(sim.board, sim.captured);
-  const material = { red: 0, black: 0 };
-  const visible = { red: [], black: [] };
-
-  for (let r = 0; r < ROWS; r += 1) {
-    for (let c = 0; c < COLS; c += 1) {
-      const piece = sim.board[r][c];
-      if (!piece || !piece.faceUp) continue;
-      material[piece.color] += SEARCH_VALUE[piece.kind];
-      visible[piece.color].push({ piece, r, c });
-    }
-  }
-  for (const color of ["red", "black"]) {
-    for (const kind of Object.keys(PIECE_COUNTS)) material[color] += pool.counts[color][kind] * SEARCH_VALUE[kind];
-  }
-
-  const features = { red: 0, black: 0 };
-  for (const color of ["red", "black"]) {
-    const enemy = opponentColor(color);
-    const captures = generateActions(sim.board, color, {
-      includeFlips: false,
-      includeMoves: false,
-      includeCaptures: true,
-      includeDarkCaptures: false,
-    });
-    const moves = generateActions(sim.board, color, {
-      includeFlips: false,
-      includeMoves: true,
-      includeCaptures: false,
-      includeDarkCaptures: false,
-    });
-
-    features[color] += captures.length * 32 + moves.length * 8;
-    for (const action of captures) {
-      const target = sim.board[action[3]][action[4]];
-      if (target) features[color] += SEARCH_VALUE[target.kind] * 0.23;
-    }
-
-    for (const item of visible[color]) {
-      const pos = { r: item.r, c: item.c };
-      const pieceValue = SEARCH_VALUE[item.piece.kind];
-      const loss = immediateKnownLossOnSquare(sim.board, pos, color);
-      if (loss > 0) features[color] -= Math.min(pieceValue, loss) * 0.62;
-      const support = visibleFriendlySupport(sim.board, pos, color);
-      features[color] += Math.min(2, support) * pieceValue * 0.06;
-      features[color] -= centerDistance(item.r, item.c) * 4;
-
-      let adjacentHidden = 0;
-      for (const nb of neighbors(item.r, item.c)) {
-        const target = sim.board[nb.r][nb.c];
-        if (target && !target.faceUp) adjacentHidden += 1;
-      }
-      features[color] += Math.min(2, adjacentHidden) * 10;
-
-      if (item.piece.kind === "P") {
-        for (const nb of neighbors(item.r, item.c)) {
-          const target = sim.board[nb.r][nb.c];
-          if (target && target.faceUp && target.color === enemy && target.kind === "K") features[color] += SEARCH_VALUE.K * 0.75;
-        }
-      }
-    }
-  }
-
-  const tempo = sim.currentColor === perspectiveColor ? 18 : -18;
-  const combo = sim.comboPos
-    ? (sim.currentColor === perspectiveColor ? 25 : -25)
-    : 0;
-  return (material[perspectiveColor] - material[opponent])
-    + (features[perspectiveColor] - features[opponent])
-    + tempo
-    + combo;
-}
-
-function publicWinner(sim) {
-  const pool = getUnseenPool(sim.board, sim.captured);
-  const alive = { red: 0, black: 0 };
-  for (let r = 0; r < ROWS; r += 1) {
-    for (let c = 0; c < COLS; c += 1) {
-      const piece = sim.board[r][c];
-      if (piece && piece.faceUp) alive[piece.color] += 1;
-    }
-  }
-  for (const color of ["red", "black"]) {
-    for (const kind of Object.keys(PIECE_COUNTS)) alive[color] += pool.counts[color][kind];
-  }
-  if (alive.red > 0 && alive.black > 0) return null;
-  if (alive.red > 0) return "red";
-  if (alive.black > 0) return "black";
-  return null;
-}
-
-function publicUnseenOutcomes(sim) {
-  const pool = getUnseenPool(sim.board, sim.captured);
-  if (!pool.total) return [];
-  const outcomes = [];
-  for (const color of ["red", "black"]) {
-    for (const kind of Object.keys(PIECE_COUNTS)) {
-      const count = pool.counts[color][kind];
-      if (count > 0) outcomes.push({ color, kind, count, probability: count / pool.total });
-    }
-  }
-  return outcomes;
-}
-
-function immediateKnownLossOnSquare(board, pos, ownColor) {
-  const piece = board[pos.r] ? board[pos.r][pos.c] : null;
-  if (!piece || !piece.faceUp || piece.color !== ownColor) return 0;
-  const enemy = opponentColor(ownColor);
-  let loss = 0;
-  for (let r = 0; r < ROWS; r += 1) {
-    for (let c = 0; c < COLS; c += 1) {
-      const attacker = board[r][c];
-      if (!attacker || !attacker.faceUp || attacker.color !== enemy) continue;
-      if (canCapture(board, { r, c }, pos)) loss = Math.max(loss, SEARCH_VALUE[piece.kind]);
-    }
-  }
-  return loss;
-}
 
 function visibleFriendlySupport(board, pos, color) {
   let count = 0;
@@ -1718,118 +1388,9 @@ function visibleFriendlySupport(board, pos, color) {
   return count;
 }
 
-function certaintyMoveForbidden(sim, action) {
-  if (action[0] !== "move") return false;
-  const nextBoard = cloneBoard(sim.board);
-  const result = applyAction(nextBoard, action);
-  if (result.invalid) return true;
-  const nextKey = visiblePositionKey(nextBoard, opponentColor(sim.currentColor));
-  return (sim.positionCounts[nextKey] || 0) >= REPETITION_LIMIT - 1;
-}
-
-function certaintyCacheKey(sim, depth, extensionDepth, rootColor) {
-  const combo = sim.comboPos ? `${sim.comboPos.r},${sim.comboPos.c},${sim.comboSteps}` : "-";
-  return `${visiblePositionKey(sim.board, sim.currentColor)}|cap=${capturedCountKey(sim.captured)}|combo=${combo}|d=${depth}|x=${extensionDepth}|root=${rootColor}`;
-}
-
-function comboContinueRequiredMargin(action, sim, ctx) {
-  if (action[0] === "capture") {
-    const guarantee = knownCaptureGuarantee(sim, action, ctx);
-    return guarantee.netCapture >= AI_SAFE_CAPTURE_MIN_NET ? -5 : ctx.diff.comboKnownMargin;
-  }
-  if (action[0] === "darkCapture") return ctx.diff.comboDarkMargin;
-  return ctx.diff.comboKnownMargin;
-}
-
-function certaintyCanStopEarly(rows, ctx) {
-  if (rows.length < 2 || ctx.depthCompleted < ctx.diff.minCompletedDepth) return false;
-  const gap = rows[0].score - rows[1].score;
-  return gap >= ctx.diff.earlyStopScoreGap && ctx.nodes >= ctx.diff.minNodes;
-}
-
-function compareCertaintyRows(a, b) {
-  return b.score - a.score
-    || b.priorScore - a.priorScore
-    || a.key.localeCompare(b.key);
-}
-
-function actionKey(action) {
-  return action.join(":");
-}
-
-function capturedCountKey(captured) {
-  const counts = {
-    red: { K: 0, A: 0, E: 0, R: 0, N: 0, C: 0, P: 0 },
-    black: { K: 0, A: 0, E: 0, R: 0, N: 0, C: 0, P: 0 },
-  };
-  for (const piece of captured || []) {
-    if (counts[piece.color] && Number.isFinite(counts[piece.color][piece.kind])) counts[piece.color][piece.kind] += 1;
-  }
-  return ["red", "black"]
-    .map((color) => Object.keys(PIECE_COUNTS).map((kind) => counts[color][kind]).join(","))
-    .join("/");
-}
-
-function centerDistance(r, c) {
-  return Math.abs(r - (ROWS - 1) / 2) + Math.abs(c - (COLS - 1) / 2);
-}
-
 function nowMs() {
-  return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 }
-
-function touchCertaintyNode(ctx, force = false) {
-  ctx.nodes += 1;
-  if ((force || (ctx.nodes & AI_TIME_CHECK_MASK) === 0) && nowMs() >= ctx.deadline) throw SEARCH_TIMEOUT;
-}
-
-function trimAiCache() {
-  if (aiPersistentCache.size <= AI_CACHE_LIMIT) return;
-  const keep = [...aiPersistentCache.entries()].slice(-Math.floor(AI_CACHE_LIMIT * 0.72));
-  aiPersistentCache = new Map(keep);
-}
-
-function yieldAiSearch() {
-  return new Promise((resolve) => window.setTimeout(resolve, 0));
-}
-
-function createSeededRng(seed) {
-  let value = seed >>> 0;
-  if (value === 0) value = 0x9e3779b9;
-  return () => {
-    value ^= value << 13;
-    value ^= value >>> 17;
-    value ^= value << 5;
-    return (value >>> 0) / 0x100000000;
-  };
-}
-
-function mixSeed(a, b) {
-  let value = (a ^ Math.imul(b >>> 0, 0x9e3779b1)) >>> 0;
-  value ^= value >>> 16;
-  value = Math.imul(value, 0x85ebca6b) >>> 0;
-  value ^= value >>> 13;
-  value = Math.imul(value, 0xc2b2ae35) >>> 0;
-  value ^= value >>> 16;
-  return value >>> 0;
-}
-
-function hashString32(text) {
-  let hash = 2166136261;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function shuffleWithRng(array, rng) {
-  for (let i = array.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(rng() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
-  }
-}
-
 
 function visiblePositionKey(board, nextColor) {
   const cells = [];
@@ -1853,6 +1414,7 @@ function captureActionHistoryMeta(board, action) {
     source: src ? { ...src } : null,
     destination: dst ? { ...dst } : null,
     movedPieceId: attacker ? attacker.id : null,
+    moverKind: attacker && attacker.faceUp ? attacker.kind : null,
     targetPieceId: target ? target.id : null,
   };
 }
@@ -1867,9 +1429,12 @@ function recordTurnAction(actor, action, result, meta) {
     source: meta && meta.source ? { ...meta.source } : null,
     destination: meta && meta.destination ? { ...meta.destination } : actionDestination(action),
     movedPieceId: meta ? meta.movedPieceId : null,
+    moverKind: meta ? meta.moverKind : null,
     targetPieceId: meta ? meta.targetPieceId : null,
     successCapture: Boolean(result.successCapture),
     capturedId: result.captured ? result.captured.id : null,
+    revealedColor: result.revealed ? result.revealed.color : null,
+    revealedKind: result.revealed ? result.revealed.kind : null,
   });
 }
 
@@ -2124,6 +1689,7 @@ function hasAnyAction(board, color) { for (let r = 0; r < ROWS; r += 1) for (let
 function checkWinner(board) { let redExists = false, blackExists = false; for (let r = 0; r < ROWS; r += 1) for (let c = 0; c < COLS; c += 1) { const piece = board[r][c]; if (!piece) continue; if (piece.color === "red") redExists = true; if (piece.color === "black") blackExists = true; } if (redExists && blackExists) return null; if (redExists) return "red"; if (blackExists) return "black"; return null; }
 function showWinner(winnerColor) {
   state.locked = true;
+  persistCurrentLearningTurn(false);
   finishCurrentLearningGame(
     "completed",
     state.playerColor[HUMAN] === winnerColor ? "human_win" : "ai_win"
@@ -2173,7 +1739,7 @@ function applyFixedLandscapeStage() {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=learning-r1-20260729-online-imitation").catch(() => {});
+    navigator.serviceWorker.register("./service-worker.js?v=learning-v2-20260805-tactical-imitation").catch(() => {});
   });
 }
 
@@ -2191,6 +1757,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     await window.DarkChessLearning.init();
     renderLearningStats();
   }
-  newGame();
+  newGame(false);
   registerServiceWorker();
 });

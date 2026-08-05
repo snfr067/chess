@@ -1,0 +1,16 @@
+{
+  "name": "taiwan-dark-chess-personal-imitation",
+  "version": "2.0.0",
+  "private": true,
+  "scripts": {
+    "check": "node tools/check.mjs",
+    "test": "node tests/learning-smoke.mjs",
+    "test:dom": "node tests/app-dom-smoke.mjs",
+    "train:base": "node tools/train-base.mjs"
+  },
+  "devDependencies": {
+    "@tensorflow/tfjs": "4.22.0",
+    "fake-indexeddb": "6.2.4",
+    "jsdom": "26.1.0"
+  }
+}
