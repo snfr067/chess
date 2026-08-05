@@ -12,8 +12,8 @@ const server = http.createServer(async (request, response) => {
     const pathname = new URL(request.url, "http://127.0.0.1").pathname;
     const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
     if (relative === "learning.js") {
-      const stats = { status: "base-ready", baseVersion: "test", personalVersion: 0, activeSlot: "a", metrics: {} };
-      const mock = `window.DarkChessLearning={init:async()=>(${JSON.stringify(stats)}),createSession:()=>({id:"test-game",status:"active",decisionIds:[],turnIds:[]}),subscribe:(callback)=>{callback(${JSON.stringify(stats)});return()=>{}},getStats:()=>(${JSON.stringify(stats)}),finishGame:async()=>true,recordTurn:async()=>true,exportArchive:async()=>new Blob(["{}"]),importArchive:async()=>true,rollbackModel:async()=>false};`;
+      const stats = { status: "loading", baseVersion: "test", personalVersion: 0, activeSlot: "a", metrics: {} };
+      const mock = `(()=>{const stats=${JSON.stringify(stats)};window.DarkChessLearning={init:async()=>{await new Promise(resolve=>setTimeout(resolve,900));stats.status="base-ready";return stats},createSession:()=>({id:"test-game",status:"active",decisionIds:[],turnIds:[],sequence:0}),subscribe:(callback)=>{callback(stats);return()=>{}},getStats:()=>stats,recordRawChoice:async()=>{await new Promise(resolve=>setTimeout(resolve,1200));return true},finishGame:async()=>true,recordTurn:async()=>true,setGameplayActive:()=>{},exportArchive:async()=>new Blob(["{}"]),importArchive:async()=>true,rollbackModel:async()=>false};})();`;
       response.writeHead(200, { "content-type": "text/javascript" });
       response.end(mock);
       return;
@@ -44,6 +44,7 @@ const dom = await JSDOM.fromURL(baseUrl, {
     window.indexedDB = indexedDB;
     window.IDBKeyRange = IDBKeyRange;
     window.fetch = (input, options) => fetch(new URL(String(input), window.location.href), options);
+    window.Math.random = () => 0.1;
     Object.defineProperty(window.navigator, "storage", {
       configurable: true,
       value: { persisted: async () => true, persist: async () => true },
@@ -51,29 +52,39 @@ const dom = await JSDOM.fromURL(baseUrl, {
   },
 });
 
-for (let retry = 0; retry < 400; retry += 1) {
-  const status = dom.window.document.getElementById("learningModelStatus")?.dataset.status;
-  if (["base-ready", "ready", "error"].includes(status)) break;
-  await new Promise((resolve) => setTimeout(resolve, 25));
-}
-
 const document = dom.window.document;
-const status = document.getElementById("learningModelStatus")?.dataset.status;
-if (status === "error") throw new Error(`頁面模型載入失敗：${JSON.stringify(dom.window.DarkChessLearning?.getStats?.())}；${errors.join(" | ")}`);
-if (!dom.window.DarkChessLearning || !dom.window.tf || !dom.window.DarkChessModelCore) throw new Error("頁面缺少模型全域元件");
+for (let retry = 0; retry < 100; retry += 1) {
+  if (document.querySelectorAll("#board .piece-btn").length === 32) break;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+const navigationStartedAt = performance.now();
 document.getElementById("openSettingsBtn").click();
-if (!document.getElementById("settingsView").classList.contains("active")) throw new Error("設定頁無法開啟");
+const navigationMs = performance.now() - navigationStartedAt;
+if (navigationMs > 50 || !document.getElementById("settingsView").classList.contains("active")) {
+  throw new Error(`模型初始化阻塞設定按鈕：${navigationMs.toFixed(1)}ms`);
+}
+if (!dom.window.DarkChessLearning || !dom.window.DarkChessModelCore) throw new Error("頁面缺少模型全域元件");
 if (!document.getElementById("correctionModeCheckbox").checked) throw new Error("糾正模式預設值不符");
 document.getElementById("settingsBackBtn").click();
 document.getElementById("startGameBtn").click();
 if (!document.getElementById("gameView").classList.contains("active")) throw new Error("遊戲頁無法開啟");
 if (document.querySelectorAll("#board .piece-btn").length !== 32) throw new Error("棋盤格數不符");
+const humanClickStartedAt = performance.now();
+document.querySelector("#board .piece-btn.hidden-piece").click();
+const humanClickDispatchMs = performance.now() - humanClickStartedAt;
+if (humanClickDispatchMs > 50) throw new Error(`玩家點擊被學習流程阻塞：${humanClickDispatchMs.toFixed(1)}ms`);
+await new Promise((resolve) => setTimeout(resolve, 180));
+const visibleAfterHumanClick = [...document.querySelectorAll("#board .piece-btn")].filter((button) => !button.classList.contains("hidden-piece")).length;
+if (visibleAfterHumanClick < 1) throw new Error("玩家動作仍被背景學習寫入阻塞");
 if (errors.length) throw new Error(`頁面錯誤：${errors.join(" | ")}`);
 
 console.log(JSON.stringify({
-  modelStatus: status,
+  modelStatus: document.getElementById("learningModelStatus")?.dataset.status,
   boardCells: document.querySelectorAll("#board .piece-btn").length,
   correctionMode: document.getElementById("correctionModeCheckbox").checked,
+  navigationMs: Math.round(navigationMs),
+  humanClickDispatchMs: Math.round(humanClickDispatchMs),
+  visibleAfterHumanClick,
   version: document.querySelector('meta[name="app-version"]')?.content,
 }));
 dom.window.close();

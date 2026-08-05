@@ -66,9 +66,18 @@ const candidates = [
 ];
 const choice = await DarkChessLearning.chooseAction(observation, candidates);
 if (!choice || !Array.isArray(choice.action) || choice.context.embeddings.length !== 2) throw new Error("基礎推論失敗");
+const stressCandidates = Array.from({ length: 32 }, (_, index) => ({
+  action: ["flip", Math.floor(index / 8), index % 8],
+  targetHidden: true,
+  consequence: Array(24).fill(0),
+}));
+const stressStartedAt = performance.now();
+const stressChoice = await DarkChessLearning.chooseAction(observation, stressCandidates);
+const stressInferenceMs = performance.now() - stressStartedAt;
+if (!stressChoice || stressInferenceMs > 1500) throw new Error(`32 候選推論超時：${Math.round(stressInferenceMs)}ms`);
 
 const session = DarkChessLearning.createSession();
-await DarkChessLearning.recordChoice(session, choice.context, candidates[1].action, {
+await DarkChessLearning.recordRawChoice(session, observation, candidates, candidates[1].action, {
   labelType: "correction",
   rejectedAction: candidates[0].action,
   turnId: `${session.id}-turn-0`,
@@ -79,7 +88,11 @@ await DarkChessLearning.recordTurn(session, {
   actor: "self",
   actions: [{ kind: "flip", action: candidates[1].action }],
 });
+DarkChessLearning.setGameplayActive(true);
 await DarkChessLearning.finishGame(session, "interrupted", "interrupted");
+await new Promise((resolve) => setTimeout(resolve, 750));
+if (DarkChessLearning.getStats().learnedGames !== 0) throw new Error("對局進行中仍啟動背景訓練");
+DarkChessLearning.setGameplayActive(false);
 
 for (let retry = 0; retry < 240; retry += 1) {
   const stats = DarkChessLearning.getStats();
@@ -100,5 +113,6 @@ console.log(JSON.stringify({
   corrections: stats.corrections,
   modelBytes: stats.modelBytes,
   inferenceMs: stats.averageInferenceMs,
+  stressInferenceMs,
 }));
 legacyDatabase.close();

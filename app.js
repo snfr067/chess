@@ -1,4 +1,4 @@
-const APP_VERSION = "learning-v2-20260805-runtime-recovery";
+const APP_VERSION = "learning-v2-20260805-performance-fix";
 
 const ROWS = 4;
 const COLS = 8;
@@ -77,7 +77,7 @@ function saveAiDelaySeconds(value) { localStorage.setItem("darkChessAiDelaySecon
 function loadAiDelayMs() { return Math.round(loadAiDelaySeconds() * 1000); }
 function formatSeconds(value) { return `${Number.parseFloat(value).toFixed(1)} 秒`; }
 function isComboRuleEnabled() { return state && typeof state.comboRule === "boolean" ? state.comboRule : loadComboRule(); }
-function actorDelay(actor, ratio = 1) { return actor === AI ? Math.max(220, Math.round(loadAiDelayMs() * ratio)) : Math.max(260, Math.round(520 * ratio)); }
+function actorDelay(actor, ratio = 1) { return actor === AI ? Math.max(120, Math.round(loadAiDelayMs() * ratio)) : Math.max(45, Math.round(110 * ratio)); }
 function loadCorrectionMode() { const saved = localStorage.getItem("darkChessCorrectionMode"); return saved === null ? true : saved === "true"; }
 function saveCorrectionMode(enabled) { localStorage.setItem("darkChessCorrectionMode", enabled ? "true" : "false"); }
 function isCorrectionInputActive() { return Boolean(state && state.correction && ["change", "takeover"].includes(state.correction.inputMode)); }
@@ -106,7 +106,7 @@ function bindEvents() {
       return;
     }
     if (state.currentPlayer !== HUMAN || state.aiThinking) return;
-    await recordHumanLearningDecision(["stop"], "normal");
+    recordHumanLearningDecision(["stop"], "normal");
     recordTurnAction(HUMAN, ["stop"], { type: "stop", successCapture: false, captured: null, lastMove: null, invalid: false }, {});
     state.combo = { active: false, r: null, c: null };
     state.selected = null;
@@ -202,7 +202,7 @@ function newGame(startTurn = true) {
     positionHistory: [],
     positionCounts: Object.create(null),
     aiSearchInfo: null,
-    learningGame: window.DarkChessLearning ? window.DarkChessLearning.createSession() : null,
+    learningGame: startTurn && window.DarkChessLearning ? window.DarkChessLearning.createSession() : null,
     learningTurnNumber: 0,
     learningSequenceIndex: 0,
     correction: {
@@ -216,6 +216,9 @@ function newGame(startTurn = true) {
       resolveInput: null,
     },
   };
+  if (window.DarkChessLearning && typeof window.DarkChessLearning.setGameplayActive === "function") {
+    window.DarkChessLearning.setGameplayActive(Boolean(startTurn));
+  }
   if (state.currentPlayer === AI && startTurn) {
     state.aiThinking = true;
     setStatus("AI 正在行動", "");
@@ -228,6 +231,9 @@ function newGame(startTurn = true) {
 }
 
 function finishCurrentLearningGame(status, outcome) {
+  if (window.DarkChessLearning && typeof window.DarkChessLearning.setGameplayActive === "function") {
+    window.DarkChessLearning.setGameplayActive(false);
+  }
   if (!state || !state.learningGame || !window.DarkChessLearning) return;
   if (state.learningGame.status !== "active") return;
   void window.DarkChessLearning.finishGame(state.learningGame, status, outcome).catch((error) => {
@@ -246,21 +252,26 @@ function interruptCurrentGame() {
   state.pendingAction = null;
 }
 
-async function recordHumanLearningDecision(action, labelType = "normal") {
+function recordHumanLearningDecision(action, labelType = "normal") {
   if (!state || !state.learningGame || !window.DarkChessLearning) return false;
   try {
     const candidates = generateLearningCandidates(HUMAN);
     if (!candidates.some((candidate) => sameAction(candidate.action, action))) return false;
-    const context = await window.DarkChessLearning.prepareDecision(buildLearningObservation(HUMAN), candidates);
-    return window.DarkChessLearning.recordChoice(state.learningGame, context, action, {
+    if (typeof window.DarkChessLearning.recordRawChoice !== "function") return false;
+    const observation = buildLearningObservation(HUMAN);
+    const sequenceIndex = state.learningSequenceIndex++;
+    void window.DarkChessLearning.recordRawChoice(state.learningGame, observation, candidates, action, {
       labelType,
       source: "human",
       turnId: currentLearningTurnId(),
       combo: state.combo.active,
-      comboStep: state.learningSequenceIndex,
-      sequenceIndex: state.learningSequenceIndex++,
+      comboStep: sequenceIndex,
+      sequenceIndex,
       phase: learningPhaseLabel(),
+    }).catch((error) => {
+      console.error("Unable to save the human learning decision.", error);
     });
+    return true;
   } catch {
     return false;
   }
@@ -1223,6 +1234,10 @@ async function chooseLearnedAiAction(comboPos = null) {
   const candidates = generateLearningCandidates(AI, comboPos);
   if (candidates.length === 0) return null;
   if (!window.DarkChessLearning) return chooseEmergencyAiAction(candidates, startedAt, "learning-module-missing");
+  const learningStatus = window.DarkChessLearning.getStats().status;
+  if (["loading", "error"].includes(learningStatus)) {
+    return chooseEmergencyAiAction(candidates, startedAt, `learning-${learningStatus}`);
+  }
   let choice;
   try {
     choice = await window.DarkChessLearning.chooseAction(buildLearningObservation(AI, comboPos), candidates);
@@ -1295,14 +1310,13 @@ function isAiRunActive(runId) { return Boolean(state && state.aiThinking && stat
 async function performVisibleAction(action, actor, options = {}) {
   if (!state || !action) return { invalid: true, successCapture: false, captured: null, lastMove: null, type: "invalid" };
   const stepStartedAt = Number.isFinite(options.stepStartedAt) ? options.stepStartedAt : nowMs();
-  if (actor === HUMAN) await recordHumanLearningDecision(action);
+  if (actor === HUMAN) recordHumanLearningDecision(action);
   const historyMeta = captureActionHistoryMeta(state.board, action);
   state.locked = true;
   state.pendingAction = action;
   state.actionViz = buildActionViz(actor, action, null, "preview");
   state.actionViz.pulse = true;
   render();
-  await sleep(capAiStepDelay(actor, actor === AI ? loadAiDelayMs() : 150, stepStartedAt));
   if (actor === AI && options.runId && !isAiRunActive(options.runId)) return { invalid: true, successCapture: false, captured: null, lastMove: null, type: "cancelled" };
 
   if (action[0] === "darkCapture") {
@@ -1852,7 +1866,23 @@ function registerServiceWorker() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", async () => {
+function initializeLearningWhenIdle() {
+  if (!window.DarkChessLearning) return;
+  window.DarkChessLearning.subscribe(renderLearningStats);
+  const initialize = () => {
+    void window.DarkChessLearning.init().then(() => renderLearningStats()).catch((error) => {
+      console.error("Unable to initialize the learning model.", error);
+      renderLearningStats();
+    });
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(initialize, { timeout: 600 });
+  } else {
+    window.setTimeout(initialize, 30);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
   applyFixedLandscapeStage();
   const versionBadge = document.getElementById("versionBadge");
   if (versionBadge) versionBadge.textContent = `版本：${APP_VERSION}`;
@@ -1863,9 +1893,5 @@ document.addEventListener("DOMContentLoaded", async () => {
   showView("home");
   newGame(false);
   registerServiceWorker();
-  if (window.DarkChessLearning) {
-    window.DarkChessLearning.subscribe(renderLearningStats);
-    await window.DarkChessLearning.init();
-    renderLearningStats();
-  }
+  initializeLearningWhenIdle();
 });

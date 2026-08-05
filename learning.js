@@ -2,7 +2,8 @@
   "use strict";
 
   const core = window.DarkChessModelCore;
-  const tf = window.tf;
+  let tf = window.tf || null;
+  let tfRuntimePromise = null;
   const DB_NAME = "taiwan-dark-chess-learning-v2";
   const DB_VERSION = 1;
   const STORES = { games: "games", turns: "turns", decisions: "decisions", models: "models", metrics: "metrics" };
@@ -30,6 +31,10 @@
   let persistenceGranted = false;
   let initPromise = null;
   let trainingQueue = Promise.resolve();
+  let pendingWriteQueue = Promise.resolve();
+  let gameplayActive = false;
+  let trainingRequested = false;
+  let trainingTimer = null;
   let activeSlot = "a";
   let params = createPersonalParameters();
   let optimizer = createOptimizerState();
@@ -115,9 +120,10 @@
     if (initPromise) return initPromise;
     initPromise = (async () => {
       try {
-        if (!core || !tf) throw new Error("模型執行元件未載入");
+        if (!core) throw new Error("模型特徵元件未載入");
         metadata.status = "loading";
         emitStats();
+        await ensureTensorflowRuntime();
         await ensureBaseModel();
         metadata.status = "base-ready";
         metadata.error = "";
@@ -230,6 +236,7 @@
   }
 
   async function ensureBaseModel() {
+    await ensureTensorflowRuntime();
     if (baseModel) return baseModel;
     if (!baseModelPromise) {
       baseModelPromise = loadBaseModel()
@@ -241,6 +248,37 @@
         });
     }
     return baseModelPromise;
+  }
+
+  async function ensureTensorflowRuntime() {
+    if (tf) return tf;
+    if (window.tf) {
+      tf = window.tf;
+      return tf;
+    }
+    if (!tfRuntimePromise) {
+      tfRuntimePromise = new Promise((resolve, reject) => {
+        if (typeof document === "undefined") {
+          reject(new Error("TensorFlow 執行元件未載入"));
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = "./vendor/tf.min.js?v=4.22.0";
+        script.async = true;
+        script.dataset.darkChessTensorflow = "true";
+        script.onload = () => {
+          tf = window.tf || null;
+          if (tf) resolve(tf);
+          else reject(new Error("TensorFlow 執行元件載入後無法使用"));
+        };
+        script.onerror = () => reject(new Error("TensorFlow 執行元件載入失敗"));
+        document.head.appendChild(script);
+      }).catch((error) => {
+        tfRuntimePromise = null;
+        throw error;
+      });
+    }
+    return tfRuntimePromise;
   }
 
   async function loadBaseModel() {
@@ -259,13 +297,6 @@
       metadata.baseModelBytes = baseModel.countParams() * 4;
     }
     metadata.modelBytes = metadata.baseModelBytes + metadata.personalModelBytes;
-    await warmBaseModel();
-  }
-
-  async function warmBaseModel() {
-    const observation = { boardChannels: new Float32Array(4 * 8 * 25), turnEvents: [], historyEvents: [], ownActor: "self" };
-    const candidate = { action: ["stop"], consequence: new Float32Array(24) };
-    await baseForward(observation, [candidate]);
   }
 
   async function loadPersonalModel() {
@@ -437,6 +468,59 @@
     metadata.p95InferenceMs = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] || 0;
   }
 
+  function recordRawChoice(session, observation, candidates, chosenAction, options = {}) {
+    if (!session || session.status !== "active" || !observation || !Array.isArray(candidates)) return Promise.resolve(false);
+    const normalizedCandidates = candidates.map(normalizeCandidate).filter(Boolean);
+    const chosenIndex = normalizedCandidates.findIndex((candidate) => sameAction(candidate.action, chosenAction));
+    if (chosenIndex < 0) return Promise.resolve(false);
+    const rejectedIndex = options.rejectedAction
+      ? normalizedCandidates.findIndex((candidate) => sameAction(candidate.action, options.rejectedAction))
+      : -1;
+    const now = new Date().toISOString();
+    const id = `decision-v2-${Date.now()}-${session.sequence++}-${Math.random().toString(36).slice(2, 7)}`;
+    const row = {
+      id,
+      gameId: session.id,
+      turnId: options.turnId || `${session.id}-turn-unknown`,
+      recordedAt: now,
+      modelVersionAtCollection: metadata.personalVersion,
+      labelType: options.labelType || "normal",
+      source: options.source || "human",
+      actionType: chosenAction[0],
+      combo: Boolean(options.combo),
+      comboStep: Number(options.comboStep) || 0,
+      phase: options.phase || "middle",
+      chosenAction: [...chosenAction],
+      rejectedAction: rejectedIndex >= 0 ? [...options.rejectedAction] : null,
+      chosenIndex,
+      rejectedIndex,
+      predictedIndex: -1,
+      chosenRank: 0,
+      observation: cloneSerializable(observation),
+      candidates: normalizedCandidates.map(cloneSerializable),
+      embeddings: null,
+      baseLogits: null,
+      pendingEmbedding: true,
+      sequenceIndex: Number(options.sequenceIndex) || 0,
+      voluntaryStop: chosenAction[0] === "stop",
+      darkCapture: chosenAction[0] === "darkCapture",
+    };
+    session.decisionIds.push(id);
+    session.updatedAt = now;
+    pendingWriteQueue = pendingWriteQueue.then(async () => {
+      await init();
+      await putOne(STORES.decisions, row);
+      await putOne(STORES.games, session);
+      return true;
+    }).catch((error) => {
+      metadata.status = baseModel ? "degraded" : "error";
+      metadata.error = error instanceof Error ? error.message : String(error);
+      emitStats();
+      return false;
+    });
+    return pendingWriteQueue;
+  }
+
   async function recordChoice(session, context, chosenAction, options = {}) {
     if (!session || session.status !== "active" || !context) return false;
     const chosenIndex = context.candidates.findIndex((candidate) => sameAction(candidate.action, chosenAction));
@@ -492,6 +576,7 @@
 
   async function finishGame(session, status, outcome) {
     if (!session || session.status !== "active") return false;
+    await pendingWriteQueue;
     const now = new Date().toISOString();
     session.status = status === "completed" ? "completed" : "interrupted";
     session.outcome = outcome || session.status;
@@ -591,16 +676,34 @@
     return { boardChannels: Array.from(channels), turnEvents: [], historyEvents: [], ownActor: "self" };
   }
 
+  function setGameplayActive(active) {
+    gameplayActive = Boolean(active);
+    if (!gameplayActive && trainingRequested) scheduleTraining();
+  }
+
   function scheduleTraining() {
-    trainingQueue = trainingQueue.then(trainPendingGames).catch((error) => {
-      metadata.status = "error";
-      metadata.error = error instanceof Error ? error.message : String(error);
-      emitStats();
-    });
+    trainingRequested = true;
+    if (gameplayActive || trainingTimer !== null) return trainingQueue;
+    const startTraining = () => {
+      trainingTimer = null;
+      if (gameplayActive) return;
+      trainingRequested = false;
+      trainingQueue = trainingQueue.then(trainPendingGames).catch((error) => {
+        metadata.status = "error";
+        metadata.error = error instanceof Error ? error.message : String(error);
+        emitStats();
+      }).finally(() => {
+        if (trainingRequested && !gameplayActive) scheduleTraining();
+      });
+    };
+    trainingTimer = typeof window.requestIdleCallback === "function"
+      ? window.requestIdleCallback(startTraining, { timeout: 3000 })
+      : window.setTimeout(startTraining, 600);
     return trainingQueue;
   }
 
   async function trainPendingGames() {
+    if (gameplayActive) { trainingRequested = true; return; }
     if (!db || !baseModel) return;
     const games = await getAll(STORES.games);
     const pending = games.filter((game) => game && game.status !== "active" && game.v2Learned !== true && Array.isArray(game.decisionIds) && game.decisionIds.length);
@@ -616,7 +719,24 @@
     const reserved = new Set([...currentRows, ...correctionRows].map((row) => row.id));
     const replay = stratifiedReplay(allDecisions.filter((row) => !reserved.has(row.id)), REPLAY_LIMIT);
     const trainingRows = uniqueRows([...currentRows, ...correctionRows, ...replay]);
-    await trainAdapter(trainingRows);
+    const hydrated = await hydrateTrainingRows(trainingRows);
+    if (!hydrated || gameplayActive) {
+      trainingRequested = true;
+      metadata.status = metadata.learnedDecisions > 0 ? "ready" : "base-ready";
+      emitStats();
+      return;
+    }
+    const parameterSnapshot = serializeParameterObject(params);
+    const optimizerSnapshot = serializeOptimizer(optimizer);
+    const trained = await trainAdapter(trainingRows);
+    if (!trained || gameplayActive) {
+      params = restoreParameterObject(parameterSnapshot, createPersonalParameters());
+      optimizer = restoreOptimizer(optimizerSnapshot);
+      trainingRequested = true;
+      metadata.status = metadata.learnedDecisions > 0 ? "ready" : "base-ready";
+      emitStats();
+      return;
+    }
     const learnedAt = new Date().toISOString();
     const pendingGameIds = new Set(pending.map((game) => game.id));
     for (const game of games) if (pendingGameIds.has(game.id)) {
@@ -633,6 +753,40 @@
     emitStats();
     const newest = await getAll(STORES.games);
     if (newest.some((game) => game && game.status !== "active" && game.v2Learned !== true && game.decisionIds && game.decisionIds.length)) scheduleTraining();
+  }
+
+  async function hydrateTrainingRows(rows) {
+    for (const row of rows) {
+      const ready = Array.isArray(row.embeddings)
+        && Array.isArray(row.candidates)
+        && row.embeddings.length === row.candidates.length
+        && Array.isArray(row.baseLogits);
+      if (ready) continue;
+      if (gameplayActive) return false;
+      await yieldToPageIdle();
+      if (gameplayActive) return false;
+      if (!row.observation || !Array.isArray(row.candidates) || !Array.isArray(row.chosenAction)) {
+        throw new Error(`學習資料缺少局面：${row.id || "unknown"}`);
+      }
+      const context = await prepareDecision(row.observation, row.candidates);
+      if (!context) throw new Error(`學習資料無法建立模型特徵：${row.id || "unknown"}`);
+      const chosenIndex = context.candidates.findIndex((candidate) => sameAction(candidate.action, row.chosenAction));
+      if (chosenIndex < 0) throw new Error(`學習資料找不到示範行動：${row.id || "unknown"}`);
+      const rejectedIndex = Array.isArray(row.rejectedAction)
+        ? context.candidates.findIndex((candidate) => sameAction(candidate.action, row.rejectedAction))
+        : -1;
+      row.chosenIndex = chosenIndex;
+      row.rejectedIndex = rejectedIndex;
+      row.predictedIndex = context.order[0];
+      row.chosenRank = context.order.indexOf(chosenIndex) + 1;
+      row.candidates = context.candidates.map(cloneSerializable);
+      row.embeddings = context.embeddings.map((embedding) => [...embedding]);
+      row.baseLogits = [...context.baseLogits];
+      row.pendingEmbedding = false;
+      await putOne(STORES.decisions, row);
+      await yieldToPage();
+    }
+    return true;
   }
 
   function uniqueRows(rows) {
@@ -664,18 +818,22 @@
   }
 
   async function trainAdapter(rows) {
-    if (!rows.length) return;
+    if (!rows.length) return true;
     const ordered = [...rows];
     for (let epoch = 0; epoch < EPOCHS; epoch += 1) {
       deterministicShuffle(ordered, `${metadata.personalVersion + 1}-${epoch}-${rows.length}`);
       for (let start = 0; start < ordered.length; start += BATCH_SIZE) {
+        if (gameplayActive) return false;
+        await yieldToPageIdle();
+        if (gameplayActive) return false;
         const batch = ordered.slice(start, start + BATCH_SIZE);
         const gradients = zeroLikeParameters();
         for (const row of batch) accumulateDecisionGradients(row, gradients);
         applyAdam(gradients, batch.length, totalLearnedDecisionCount(rows.length));
-        if ((start / BATCH_SIZE) % 4 === 0) await yieldToPage();
+        await yieldToPage();
       }
     }
+    return true;
   }
 
   function totalLearnedDecisionCount(extra) { return Math.max(1, (metadata.learnedDecisions || 0) + extra); }
@@ -963,6 +1121,13 @@
 
   function yieldToPage() { return new Promise((resolve) => window.setTimeout(resolve, 0)); }
 
+  function yieldToPageIdle() {
+    if (typeof window.requestIdleCallback === "function") {
+      return new Promise((resolve) => window.requestIdleCallback(resolve, { timeout: 1200 }));
+    }
+    return yieldToPage();
+  }
+
   function subscribe(callback) {
     if (typeof callback !== "function") return () => {};
     subscribers.add(callback);
@@ -982,9 +1147,11 @@
     createSession,
     prepareDecision,
     chooseAction,
+    recordRawChoice,
     recordChoice,
     recordTurn,
     finishGame,
+    setGameplayActive,
     exportArchive,
     importArchive,
     rollbackModel,

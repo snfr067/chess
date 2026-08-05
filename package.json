@@ -6,6 +6,7 @@
     "check": "node tools/check.mjs",
     "test": "node tests/learning-smoke.mjs",
     "test:dom": "node tests/app-dom-smoke.mjs",
+    "test:startup": "node tests/app-startup-performance.mjs",
     "test:recovery": "node tests/app-runtime-recovery.mjs",
     "test:degraded": "node tests/learning-storage-failure.mjs",
     "train:base": "node tools/train-base.mjs"

@@ -29,8 +29,10 @@ const server = http.createServer(async (request, response) => {
               return {action:[...candidates[0].action],confidence:1,elapsedMs:1,context:context(candidates),candidateIndex:0};
             },
             recordChoice:async()=>true,
+            recordRawChoice:async()=>true,
             finishGame:async()=>true,
             recordTurn:async()=>true,
+            setGameplayActive:()=>{},
             exportArchive:async()=>new Blob(["{}"]),
             importArchive:async()=>true,
             rollbackModel:async()=>false
