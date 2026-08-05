@@ -10,6 +10,7 @@
   const CONSEQUENCE_DIM = 24;
   const BELIEF_DIM = 14;
   const CANDIDATE_DIM = 117;
+  const STATE_DIM = 64 + 32 + 32 + BELIEF_DIM;
   const ACTION_TYPES = ["flip", "move", "capture", "darkCapture", "stop"];
   const PIECE_TYPES = ["K", "A", "E", "R", "N", "C", "P"];
 
@@ -197,6 +198,40 @@
     });
   }
 
+  function createInferenceModels(tf, baseModel) {
+    const stateVector = tf.layers.concatenate({ name: "inference_state_vector" }).apply([
+      baseModel.getLayer("board_global").output,
+      baseModel.getLayer("turn_gru").output,
+      baseModel.getLayer("history_gru").output,
+      baseModel.inputs[3],
+    ]);
+    const stateModel = tf.model({
+      name: "dark_chess_state_encoder_v2",
+      inputs: baseModel.inputs.slice(0, 4),
+      outputs: stateVector,
+    });
+
+    const cachedStateInput = tf.input({ shape: [STATE_DIM], name: "cached_state" });
+    const candidateInput = tf.input({ shape: [CANDIDATE_DIM], name: "inference_candidate" });
+    const combined = tf.layers.concatenate({ name: "inference_combined" }).apply([
+      cachedStateInput,
+      candidateInput,
+    ]);
+    const hidden = baseModel.getLayer("candidate_dense_128").apply(combined);
+    const embedding = baseModel.getLayer("candidate_embedding").apply(hidden);
+    const candidateModel = tf.model({
+      name: "dark_chess_candidate_head_v2",
+      inputs: [cachedStateInput, candidateInput],
+      outputs: [
+        embedding,
+        baseModel.getLayer("base_logit").apply(embedding),
+        baseModel.getLayer("continuation_value").apply(embedding),
+        baseModel.getLayer("objective_auxiliary").apply(embedding),
+      ],
+    });
+    return { stateModel, candidateModel };
+  }
+
   const api = {
     ROWS,
     COLS,
@@ -207,6 +242,7 @@
     CONSEQUENCE_DIM,
     BELIEF_DIM,
     CANDIDATE_DIM,
+    STATE_DIM,
     ACTION_TYPES,
     PIECE_TYPES,
     boardTensor,
@@ -217,6 +253,7 @@
     actionSource,
     actionDestination,
     createBaseModel,
+    createInferenceModels,
     clamp,
   };
 

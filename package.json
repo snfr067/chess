@@ -9,6 +9,8 @@
     "test:startup": "node tests/app-startup-performance.mjs",
     "test:recovery": "node tests/app-runtime-recovery.mjs",
     "test:degraded": "node tests/learning-storage-failure.mjs",
+    "test:model-equivalence": "node tests/model-inference-equivalence.mjs",
+    "test:worker": "node tests/ai-worker-smoke.mjs",
     "train:base": "node tools/train-base.mjs"
   },
   "devDependencies": {

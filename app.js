@@ -1,4 +1,4 @@
-const APP_VERSION = "learning-v2-20260805-performance-fix";
+const APP_VERSION = "learning-v2-20260805-exact-worker";
 
 const ROWS = 4;
 const COLS = 8;
@@ -57,6 +57,9 @@ const AI_STEP_GUARD_MS = 70;
 let state = null;
 let aiRunId = 0;
 let toastTimer = null;
+let aiWorker = null;
+let aiWorkerRequestId = 0;
+const aiWorkerRequests = new Map();
 const dom = {};
 
 function makePiece(color, kind, id) { return { color, kind, faceUp: false, id }; }
@@ -168,6 +171,7 @@ function newGame(startTurn = true) {
   persistCurrentLearningTurn(true);
   finishCurrentLearningGame("interrupted", "interrupted");
   cancelAiCorrection();
+  if (aiWorkerRequests.size) recycleAiWorker();
   aiRunId += 1;
   const pieces = [];
   let id = 1;
@@ -245,6 +249,7 @@ function interruptCurrentGame() {
   persistCurrentLearningTurn(true);
   finishCurrentLearningGame("interrupted", "interrupted");
   cancelAiCorrection();
+  if (aiWorkerRequests.size) recycleAiWorker();
   aiRunId += 1;
   if (!state) return;
   state.aiThinking = false;
@@ -255,12 +260,11 @@ function interruptCurrentGame() {
 function recordHumanLearningDecision(action, labelType = "normal") {
   if (!state || !state.learningGame || !window.DarkChessLearning) return false;
   try {
-    const candidates = generateLearningCandidates(HUMAN);
-    if (!candidates.some((candidate) => sameAction(candidate.action, action))) return false;
-    if (typeof window.DarkChessLearning.recordRawChoice !== "function") return false;
-    const observation = buildLearningObservation(HUMAN);
+    const session = state.learningGame;
+    const snapshot = createWorkerStateSnapshot();
+    const comboPos = state.combo.active ? { r: state.combo.r, c: state.combo.c } : null;
     const sequenceIndex = state.learningSequenceIndex++;
-    void window.DarkChessLearning.recordRawChoice(state.learningGame, observation, candidates, action, {
+    const options = {
       labelType,
       source: "human",
       turnId: currentLearningTurnId(),
@@ -268,6 +272,16 @@ function recordHumanLearningDecision(action, labelType = "normal") {
       comboStep: sequenceIndex,
       sequenceIndex,
       phase: learningPhaseLabel(),
+    };
+    if (typeof window.DarkChessLearning.recordPositionChoice === "function") {
+      void window.DarkChessLearning.recordPositionChoice(session, snapshot, HUMAN, comboPos, action, options).catch((error) => {
+        console.error("Unable to save the human learning decision.", error);
+      });
+      return true;
+    }
+    void requestWorkerPositionPreparation(snapshot, HUMAN, comboPos).then((prepared) => {
+      if (!prepared || !Array.isArray(prepared.candidates)) return false;
+      return window.DarkChessLearning.recordRawChoice(session, prepared.observation, prepared.candidates, action, options);
     }).catch((error) => {
       console.error("Unable to save the human learning decision.", error);
     });
@@ -407,10 +421,26 @@ function generateLearningLegalActions(actor, comboPos = null) {
 }
 
 function generateLearningCandidates(actor, comboPos = null) {
-  return generateLearningLegalActions(actor, comboPos).map((action) => buildLearningCandidate(actor, action));
+  const analysisContext = createLearningAnalysisContext(actor, comboPos);
+  return generateLearningLegalActions(actor, comboPos).map((action) => buildLearningCandidate(actor, action, analysisContext));
 }
 
-function buildLearningCandidate(actor, action) {
+function createLearningAnalysisContext(actor, comboPos = null) {
+  const color = state.playerColor[actor];
+  return {
+    color,
+    enemy: color ? opponentColor(color) : null,
+    before: color ? summarizePublicBoard(state.board, color) : null,
+    unseen: getUnseenPool(state.board, state.captured),
+    comboPos: comboPos || (
+      state.combo.active && state.currentPlayer === actor
+        ? { r: state.combo.r, c: state.combo.c }
+        : null
+    ),
+  };
+}
+
+function buildLearningCandidate(actor, action, analysisContext = null) {
   const source = actionSource(action);
   const destination = actionDestination(action);
   const mover = source ? state.board[source.r][source.c] : null;
@@ -420,19 +450,19 @@ function buildLearningCandidate(actor, action) {
     moverKind: mover && mover.faceUp ? mover.kind : null,
     targetKind: target && target.faceUp ? target.kind : null,
     targetHidden: Boolean(target && !target.faceUp),
-    consequence: analyzeLearningCandidate(actor, action),
+    consequence: analyzeLearningCandidate(actor, action, analysisContext || createLearningAnalysisContext(actor)),
   };
 }
 
-function analyzeLearningCandidate(actor, action) {
-  const color = state.playerColor[actor];
-  const enemy = color ? opponentColor(color) : null;
+function analyzeLearningCandidate(actor, action, analysisContext) {
+  const color = analysisContext.color;
+  const enemy = analysisContext.enemy;
   const vector = new Float32Array(24);
   if (!color) return Array.from(vector);
   const source = actionSource(action);
   const destination = actionDestination(action);
-  const before = summarizePublicBoard(state.board, color);
-  const branches = learningActionBranches(action, color);
+  const before = analysisContext.before;
+  const branches = learningActionBranches(action, color, analysisContext);
   for (const branch of branches) {
     const weight = branch.probability;
     const after = summarizePublicBoard(branch.board, color);
@@ -474,13 +504,21 @@ function analyzeLearningCandidate(actor, action) {
   return Array.from(vector);
 }
 
-function learningActionBranches(action, color) {
+function learningActionBranches(action, color, analysisContext = null) {
   const source = actionSource(action);
   const destination = actionDestination(action);
   const branches = [];
-  if (action[0] === "stop") return [{ probability: 1, board: cloneBoard(state.board), successCapture: false, capturedValue: 0, finalPos: source || (state.combo.active ? { r: state.combo.r, c: state.combo.c } : null) }];
+  if (action[0] === "stop") return [{
+    probability: 1,
+    board: cloneBoard(state.board),
+    successCapture: false,
+    capturedValue: 0,
+    finalPos: source || (analysisContext && analysisContext.comboPos) || (state.combo.active ? { r: state.combo.r, c: state.combo.c } : null),
+  }];
   if (action[0] === "darkCapture") {
-    const unseen = getUnseenPool(state.board, state.captured);
+    const unseen = analysisContext && analysisContext.unseen
+      ? analysisContext.unseen
+      : getUnseenPool(state.board, state.captured);
     const total = Math.max(1, unseen.total);
     const original = state.board[destination.r][destination.c];
     for (const outcomeColor of ["red", "black"]) {
@@ -896,7 +934,7 @@ async function completeCorrectionInput(action, result) {
   const context = state.correction.inputContext;
   const rejectedAction = state.correction.rejectedAction;
   try {
-    await window.DarkChessLearning.recordChoice(state.learningGame, context, action, {
+    const options = {
       labelType: mode === "change" ? "correction" : "demonstration",
       source: mode === "change" ? "change-one-step" : "take-over-turn",
       rejectedAction: mode === "change" ? rejectedAction : null,
@@ -905,7 +943,9 @@ async function completeCorrectionInput(action, result) {
       comboStep: state.learningSequenceIndex,
       sequenceIndex: state.learningSequenceIndex++,
       phase: learningPhaseLabel(),
-    });
+    };
+    const saved = await window.DarkChessLearning.recordChoice(state.learningGame, context, action, options);
+    if (!saved) throw new Error("糾正行動不在完整合法候選中");
   } catch {
     showToast("這一步已執行，學習紀錄保存失敗");
   }
@@ -932,6 +972,134 @@ function cancelAiCorrection() {
   state.correction.takeOver = false;
   state.pendingAction = null;
   hideCorrectionPanel();
+}
+
+function createWorkerStateSnapshot() {
+  return {
+    board: cloneBoard(state.board),
+    turnColor: state.turnColor,
+    playerColor: { ...state.playerColor },
+    currentPlayer: state.currentPlayer,
+    comboRule: state.comboRule,
+    combo: { ...state.combo },
+    captured: state.captured.map((piece) => ({ ...piece })),
+    turnActions: state.turnActions.map((row) => ({
+      ...row,
+      action: Array.isArray(row.action) ? [...row.action] : null,
+      source: row.source ? { ...row.source } : null,
+      destination: row.destination ? { ...row.destination } : null,
+    })),
+    turnHistory: state.turnHistory.map((turn) => ({
+      ...turn,
+      from: turn.from ? { ...turn.from } : null,
+      to: turn.to ? { ...turn.to } : null,
+      chaseTargetIds: Array.isArray(turn.chaseTargetIds) ? [...turn.chaseTargetIds] : [],
+      actions: Array.isArray(turn.actions) ? turn.actions.map((row) => ({
+        ...row,
+        action: Array.isArray(row.action) ? [...row.action] : null,
+        source: row.source ? { ...row.source } : null,
+        destination: row.destination ? { ...row.destination } : null,
+      })) : [],
+    })),
+    positionHistory: [...state.positionHistory],
+    positionCounts: { ...state.positionCounts },
+  };
+}
+
+function ensureAiWorker() {
+  if (aiWorker || typeof Worker !== "function") return aiWorker;
+  try {
+    aiWorker = new Worker(`./ai-worker.js?v=${APP_VERSION}`);
+    aiWorker.addEventListener("message", (event) => {
+      const message = event.data || {};
+      if (message.type === "worker-load-error") {
+        console.error("AI worker model failed to load.", message.error || "unknown error");
+        recycleAiWorker();
+        return;
+      }
+      if (!["result", "prepared", "evaluated", "error"].includes(message.type)) return;
+      const pending = aiWorkerRequests.get(message.id);
+      if (!pending) return;
+      aiWorkerRequests.delete(message.id);
+      if (message.type === "error") {
+        pending.reject(new Error(message.error || "AI worker failed"));
+        return;
+      }
+      if (message.type === "result") pending.resolve(message.choice);
+      else if (message.type === "prepared") pending.resolve(message.prepared);
+      else pending.resolve(message.context);
+    });
+    aiWorker.addEventListener("error", (error) => {
+      console.error("AI worker failed.", error);
+      recycleAiWorker();
+    });
+  } catch (error) {
+    console.error("Unable to create AI worker.", error);
+    aiWorker = null;
+  }
+  return aiWorker;
+}
+
+function recycleAiWorker() {
+  if (aiWorker) aiWorker.terminate();
+  aiWorker = null;
+  for (const pending of aiWorkerRequests.values()) {
+    pending.resolve(null);
+  }
+  aiWorkerRequests.clear();
+}
+
+function requestWorkerMessage(payload) {
+  const worker = ensureAiWorker();
+  if (!worker) return Promise.reject(new Error("此瀏覽器無法建立 AI 背景執行緒"));
+  const id = ++aiWorkerRequestId;
+  return new Promise((resolve, reject) => {
+    aiWorkerRequests.set(id, { resolve, reject });
+    try {
+      worker.postMessage({ ...payload, id });
+    } catch (error) {
+      console.error("Unable to send the AI position to the worker.", error);
+      aiWorkerRequests.delete(id);
+      reject(error);
+    }
+  });
+}
+
+function currentLearningInferenceSnapshot() {
+  return window.DarkChessLearning && typeof window.DarkChessLearning.getInferenceSnapshot === "function"
+    ? window.DarkChessLearning.getInferenceSnapshot()
+    : null;
+}
+
+async function requestAiWorkerDecision(comboPos) {
+  if (!state) return Promise.resolve(null);
+  if (window.DarkChessLearning && typeof window.DarkChessLearning.init === "function") {
+    await window.DarkChessLearning.init();
+  }
+  return requestWorkerMessage({
+    type: "think",
+    snapshot: createWorkerStateSnapshot(),
+    comboPos: comboPos ? { ...comboPos } : null,
+    learningSnapshot: currentLearningInferenceSnapshot(),
+  });
+}
+
+function requestWorkerPositionPreparation(snapshot, actor, comboPos) {
+  return requestWorkerMessage({
+    type: "prepare",
+    snapshot,
+    actor,
+    comboPos: comboPos ? { ...comboPos } : null,
+  });
+}
+
+function requestWorkerEvaluation(observation, candidates, learningSnapshot = null) {
+  return requestWorkerMessage({
+    type: "evaluate",
+    observation,
+    candidates,
+    learningSnapshot: learningSnapshot || currentLearningInferenceSnapshot(),
+  });
 }
 
 async function onCellClick(r, c) {
@@ -1102,7 +1270,8 @@ function scheduleAiMove() {
 async function recoverAiMoveFailure(error) {
   console.error("AI turn failed; recovering the turn.", error);
   if (!state || state.currentPlayer !== AI) return;
-  aiRunId += 1;
+  const recoveryRunId = aiRunId + 1;
+  aiRunId = recoveryRunId;
   cancelAiCorrection();
   state.locked = false;
   state.pendingAction = null;
@@ -1112,10 +1281,13 @@ async function recoverAiMoveFailure(error) {
   try {
     const alreadyMoved = state.turnActions.some((event) => event && event.actor === AI);
     if (!alreadyMoved) {
-      const candidates = generateLearningCandidates(AI);
-      if (!candidates.length) throw new Error("AI 沒有可執行行動");
-      const choice = chooseEmergencyAiAction(candidates, nowMs(), error instanceof Error ? error.message : String(error));
-      const result = await performVisibleAction(choice.action, AI, { stepStartedAt: nowMs() });
+      recycleAiWorker();
+      const choice = await chooseLearnedAiAction();
+      if (!choice || !choice.action || !isAiRunActive(recoveryRunId)) return;
+      const result = await performVisibleAction(choice.action, AI, {
+        runId: recoveryRunId,
+        stepStartedAt: nowMs() - (choice.totalElapsedMs || 0),
+      });
       const winner = checkWinner(state.board);
       if (winner !== null) {
         state.aiThinking = false;
@@ -1130,12 +1302,10 @@ async function recoverAiMoveFailure(error) {
     state.locked = false;
     state.pendingAction = null;
     state.aiThinking = false;
-    if (state.turnColor === null) {
-      state.currentPlayer = HUMAN;
-      setStatus("請先翻一顆棋。", "");
-      render();
-      return;
-    }
+    setStatus("AI 背景模型載入失敗", "可返回首頁或重新開始");
+    showToast("AI 背景模型載入失敗，未使用簡化行動");
+    render();
+    return;
   }
 
   state.locked = false;
@@ -1159,10 +1329,10 @@ async function aiMove() {
     let result = null;
 
     if (takeOver) {
-      const candidates = generateLearningCandidates(AI, comboPos);
-      if (!candidates.length) break;
-      const context = await window.DarkChessLearning.prepareDecision(buildLearningObservation(AI, comboPos), candidates);
+      const takeoverChoice = await chooseLearnedAiAction(comboPos);
       if (!isAiRunActive(runId)) return;
+      if (!takeoverChoice || !takeoverChoice.action) break;
+      const context = takeoverChoice.context;
       const demonstrated = await beginCorrectionInput("takeover", context, null, comboPos);
       if (!isAiRunActive(runId) || demonstrated.cancelled) return;
       action = demonstrated.action;
@@ -1231,78 +1401,23 @@ async function aiMove() {
 async function chooseLearnedAiAction(comboPos = null) {
   if (!state) return null;
   const startedAt = nowMs();
-  const candidates = generateLearningCandidates(AI, comboPos);
-  if (candidates.length === 0) return null;
-  if (!window.DarkChessLearning) return chooseEmergencyAiAction(candidates, startedAt, "learning-module-missing");
-  const learningStatus = window.DarkChessLearning.getStats().status;
-  if (["loading", "error"].includes(learningStatus)) {
-    return chooseEmergencyAiAction(candidates, startedAt, `learning-${learningStatus}`);
-  }
-  let choice;
-  try {
-    choice = await window.DarkChessLearning.chooseAction(buildLearningObservation(AI, comboPos), candidates);
-  } catch (error) {
-    console.error("AI model inference failed; using emergency public-information score.", error);
-    return chooseEmergencyAiAction(candidates, startedAt, error instanceof Error ? error.message : String(error));
-  }
-  if (!choice) return null;
+  const legalActions = generateLearningLegalActions(AI, comboPos);
+  if (legalActions.length === 0) return null;
+  const choice = await requestAiWorkerDecision(comboPos);
+  const validChoice = choice && Array.isArray(choice.action)
+    && legalActions.some((action) => sameAction(action, choice.action));
+  if (!validChoice) throw new Error("AI 背景模型回傳了不合法行動");
 
   state.aiSearchInfo = {
-    engine: "tactical-imitation-v2",
+    engine: "tactical-imitation-v2-exact-worker",
     elapsedMs: Math.round(nowMs() - startedAt),
     learnedGames: window.DarkChessLearning ? window.DarkChessLearning.getStats().learnedGames : 0,
     learnedDecisions: window.DarkChessLearning ? window.DarkChessLearning.getStats().learnedDecisions : 0,
     confidence: choice.confidence,
-    candidates: candidates.length,
+    candidates: choice.context.candidates.length,
   };
   choice.totalElapsedMs = nowMs() - startedAt;
   return choice;
-}
-
-function chooseEmergencyAiAction(candidates, startedAt, reason) {
-  let bestIndex = 0;
-  let bestScore = -Infinity;
-  for (let index = 0; index < candidates.length; index += 1) {
-    const candidate = candidates[index];
-    const action = candidate.action || [];
-    const consequence = candidate.consequence || [];
-    let score = 0;
-    score += (Number(consequence[21]) || 0) * 100000;
-    score += (Number(consequence[19]) || 0) * 4200;
-    score += (Number(consequence[2]) || 0) * 1800;
-    score -= (Number(consequence[3]) || 0) * 5200;
-    score -= (Number(consequence[8]) || 0) * 1800;
-    score += (Number(consequence[17]) || 0) * 400;
-    score += (Number(consequence[12]) || 0) * 180;
-    if (action[0] === "flip") {
-      const row = Number(action[1]) || 0;
-      const col = Number(action[2]) || 0;
-      score += 1 - (Math.abs(row - 1.5) + Math.abs(col - 3.5)) / 8;
-    }
-    if (score > bestScore) {
-      bestScore = score;
-      bestIndex = index;
-    }
-  }
-  const elapsedMs = nowMs() - startedAt;
-  state.aiSearchInfo = {
-    engine: "tactical-imitation-v2-recovery",
-    elapsedMs: Math.round(elapsedMs),
-    learnedGames: window.DarkChessLearning ? window.DarkChessLearning.getStats().learnedGames : 0,
-    learnedDecisions: window.DarkChessLearning ? window.DarkChessLearning.getStats().learnedDecisions : 0,
-    confidence: 0,
-    candidates: candidates.length,
-    recoveryReason: reason,
-  };
-  return {
-    action: [...candidates[bestIndex].action],
-    confidence: 0,
-    elapsedMs,
-    totalElapsedMs: elapsedMs,
-    context: null,
-    candidateIndex: bestIndex,
-    recovery: true,
-  };
 }
 
 function isAiRunActive(runId) { return Boolean(state && state.aiThinking && state.currentPlayer === AI && runId === aiRunId); }
@@ -1882,16 +1997,36 @@ function initializeLearningWhenIdle() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  applyFixedLandscapeStage();
-  const versionBadge = document.getElementById("versionBadge");
-  if (versionBadge) versionBadge.textContent = `版本：${APP_VERSION}`;
-  initDom();
-  bindEvents();
-  syncSettingsUI();
-  createBoardButtons();
-  showView("home");
-  newGame(false);
-  registerServiceWorker();
-  initializeLearningWhenIdle();
-});
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  window.DarkChessWorkerApi = {
+    preparePosition: requestWorkerPositionPreparation,
+    evaluatePrepared: requestWorkerEvaluation,
+  };
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("DOMContentLoaded", () => {
+    applyFixedLandscapeStage();
+    const versionBadge = document.getElementById("versionBadge");
+    if (versionBadge) versionBadge.textContent = `版本：${APP_VERSION}`;
+    initDom();
+    bindEvents();
+    syncSettingsUI();
+    createBoardButtons();
+    showView("home");
+    newGame(false);
+    registerServiceWorker();
+    ensureAiWorker();
+    initializeLearningWhenIdle();
+  });
+} else {
+  globalThis.DarkChessWorkerGame = {
+    buildDecisionInput(snapshot, actor, comboPos) {
+      state = snapshot;
+      const startedAt = nowMs();
+      const observation = buildLearningObservation(actor, comboPos);
+      const candidates = generateLearningCandidates(actor, comboPos);
+      return { observation, candidates, featureElapsedMs: nowMs() - startedAt };
+    },
+  };
+}

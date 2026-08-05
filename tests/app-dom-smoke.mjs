@@ -13,7 +13,7 @@ const server = http.createServer(async (request, response) => {
     const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
     if (relative === "learning.js") {
       const stats = { status: "loading", baseVersion: "test", personalVersion: 0, activeSlot: "a", metrics: {} };
-      const mock = `(()=>{const stats=${JSON.stringify(stats)};window.DarkChessLearning={init:async()=>{await new Promise(resolve=>setTimeout(resolve,900));stats.status="base-ready";return stats},createSession:()=>({id:"test-game",status:"active",decisionIds:[],turnIds:[],sequence:0}),subscribe:(callback)=>{callback(stats);return()=>{}},getStats:()=>stats,recordRawChoice:async()=>{await new Promise(resolve=>setTimeout(resolve,1200));return true},finishGame:async()=>true,recordTurn:async()=>true,setGameplayActive:()=>{},exportArchive:async()=>new Blob(["{}"]),importArchive:async()=>true,rollbackModel:async()=>false};})();`;
+      const mock = `(()=>{const stats=${JSON.stringify(stats)};window.DarkChessLearning={init:async()=>{await new Promise(resolve=>setTimeout(resolve,900));stats.status="base-ready";return stats},createSession:()=>({id:"test-game",status:"active",decisionIds:[],turnIds:[],sequence:0}),subscribe:(callback)=>{callback(stats);return()=>{}},getStats:()=>stats,getInferenceSnapshot:()=>null,recordPositionChoice:async()=>{await new Promise(resolve=>setTimeout(resolve,1200));return true},recordRawChoice:async()=>true,finishGame:async()=>true,recordTurn:async()=>true,setGameplayActive:()=>{},exportArchive:async()=>new Blob(["{}"]),importArchive:async()=>true,rollbackModel:async()=>false};})();`;
       response.writeHead(200, { "content-type": "text/javascript" });
       response.end(mock);
       return;
@@ -45,6 +45,19 @@ const dom = await JSDOM.fromURL(baseUrl, {
     window.IDBKeyRange = IDBKeyRange;
     window.fetch = (input, options) => fetch(new URL(String(input), window.location.href), options);
     window.Math.random = () => 0.1;
+    window.Worker = class {
+      constructor() { this.listeners = new Map(); }
+      addEventListener(type, handler) { this.listeners.set(type, handler); }
+      terminate() {}
+      postMessage(message) {
+        if (message.type !== "think") return;
+        const index = message.snapshot.board.flat().findIndex((piece) => piece && !piece.faceUp);
+        const action = ["flip", Math.floor(index / 8), index % 8];
+        const candidate = { action, targetHidden: true, consequence: Array(24).fill(0) };
+        const context = { observation: {}, candidates: [candidate], embeddings: [Array(64).fill(0)], baseLogits: [0], continuationValues: [0], scores: [0], probabilities: [1], order: [0], modelVersion: 0 };
+        setTimeout(() => this.listeners.get("message")?.({ data: { type: "result", id: message.id, choice: { action, confidence: 1, context } } }), 0);
+      }
+    };
     Object.defineProperty(window.navigator, "storage", {
       configurable: true,
       value: { persisted: async () => true, persist: async () => true },

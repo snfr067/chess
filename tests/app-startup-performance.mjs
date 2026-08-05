@@ -66,16 +66,9 @@ if (settingsClickMs > 50 || !document.getElementById("settingsView").classList.c
   throw new Error(`同步模型資產仍阻塞設定按鈕：${settingsClickMs.toFixed(1)}ms`);
 }
 
-let status = "loading";
-for (let retry = 0; retry < 400; retry += 1) {
-  status = document.getElementById("learningModelStatus")?.dataset.status || "loading";
-  if (dom.window.tf && ["base-ready", "ready", "degraded", "error"].includes(status)) break;
-  await new Promise((resolve) => setTimeout(resolve, 25));
-}
-if (!dom.window.tf) {
-  throw new Error(`延後載入模型失敗：status=${status}；stats=${JSON.stringify(dom.window.DarkChessLearning?.getStats?.())}；${errors.join(" | ")}`);
-}
-
-console.log(JSON.stringify({ settingsClickMs: Math.round(settingsClickMs), tensorflowLoadedLater: true }));
+await new Promise((resolve) => setTimeout(resolve, 100));
+if (dom.window.tf) throw new Error("TensorFlow 仍在主執行緒初始化");
+const status = document.getElementById("learningModelStatus")?.dataset.status || "loading";
+console.log(JSON.stringify({ settingsClickMs: Math.round(settingsClickMs), tensorflowKeptOffMainThread: true, status }));
 dom.window.close();
 await new Promise((resolve) => server.close(resolve));

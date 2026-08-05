@@ -1,14 +1,15 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-learning-v2-20260805-performance-fix";
+const CACHE_NAME = "taiwan-dark-chess-pwa-learning-v2-20260805-exact-worker";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=learning-v2-20260805-performance-fix",
+  "./style.css?v=learning-v2-20260805-exact-worker",
   "./vendor/tf.min.js?v=4.22.0",
-  "./model-core.js?v=learning-v2-20260805-performance-fix",
+  "./model-core.js?v=learning-v2-20260805-exact-worker",
   "./base-model.json",
   "./base-model.weights.bin",
-  "./learning.js?v=learning-v2-20260805-performance-fix",
-  "./app.js?v=learning-v2-20260805-performance-fix",
+  "./learning.js?v=learning-v2-20260805-exact-worker",
+  "./app.js?v=learning-v2-20260805-exact-worker",
+  "./ai-worker.js?v=learning-v2-20260805-exact-worker",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg"

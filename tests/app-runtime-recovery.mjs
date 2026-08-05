@@ -69,6 +69,12 @@ const dom = await JSDOM.fromURL(baseUrl, {
     window.IDBKeyRange = IDBKeyRange;
     window.fetch = (input, options) => fetch(new URL(String(input), window.location.href), options);
     window.Math.random = () => 0.9;
+    window.Worker = class {
+      constructor() { this.listeners = new Map(); }
+      addEventListener(type, handler) { this.listeners.set(type, handler); }
+      postMessage() {}
+      terminate() {}
+    };
     Object.defineProperty(window.navigator, "storage", {
       configurable: true,
       value: { persisted: async () => true, persist: async () => true },
@@ -83,37 +89,18 @@ for (let retry = 0; retry < 300; retry += 1) {
   await wait(20);
 }
 document.getElementById("startGameBtn").click();
-await wait(1800);
+await wait(220);
 
-let visible = [...document.querySelectorAll("#board .piece-btn")].filter((button) => !button.classList.contains("hidden-piece"));
-if (visible.length !== 1 || document.getElementById("turnOrb").textContent !== "您") {
-  throw new Error(`推論失敗後 AI 沒有自動復原：visible=${visible.length}, turn=${document.getElementById("turnOrb").textContent}`);
-}
-
-dom.window.Math.random = () => 0.1;
-dom.window.__choiceMode = "normal";
-dom.window.localStorage.setItem("darkChessCorrectionMode", "false");
-document.getElementById("newGameBtn").click();
-await wait(100);
-visible = [...document.querySelectorAll("#board .piece-btn")].filter((button) => !button.classList.contains("hidden-piece"));
-if (visible.length !== 0) throw new Error("玩家先手局面初始化失敗");
-document.querySelector("#board .piece-btn.hidden-piece").click();
-await wait(1800);
-visible = [...document.querySelectorAll("#board .piece-btn")].filter((button) => !button.classList.contains("hidden-piece"));
-if (visible.length !== 2 || document.getElementById("turnOrb").textContent !== "您") {
-  throw new Error(`玩家先手後 AI 沒有完成回合：visible=${visible.length}, turn=${document.getElementById("turnOrb").textContent}`);
-}
-
-dom.window.Math.random = () => 0.9;
-dom.window.__choiceMode = "null";
-document.getElementById("newGameBtn").click();
-await wait(1800);
-visible = [...document.querySelectorAll("#board .piece-btn")].filter((button) => !button.classList.contains("hidden-piece"));
-if (visible.length !== 1 || document.getElementById("turnOrb").textContent !== "您") {
-  throw new Error(`空模型輸出後 AI 沒有完成回合：visible=${visible.length}, turn=${document.getElementById("turnOrb").textContent}`);
+const visible = [...document.querySelectorAll("#board .piece-btn")].filter((button) => !button.classList.contains("hidden-piece"));
+if (visible.length !== 0) throw new Error("背景模型失敗時仍執行了簡化行動");
+const backStartedAt = performance.now();
+document.getElementById("gameBackBtn").click();
+const backClickMs = performance.now() - backStartedAt;
+if (backClickMs > 50 || !document.getElementById("homeView").classList.contains("active")) {
+  throw new Error(`AI 失敗狀態阻塞返回按鈕：${backClickMs.toFixed(1)}ms`);
 }
 
 if (jsErrors.length) throw new Error(`頁面執行錯誤：${jsErrors.join(" | ")}`);
-console.log(JSON.stringify({ inferenceFailureRecovered: true, humanFirstAiMoved: true, nullChoiceRecovered: true }));
+console.log(JSON.stringify({ noSimplifiedFallback: true, backClickMs }));
 dom.window.close();
 await new Promise((resolve) => server.close(resolve));

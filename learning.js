@@ -26,8 +26,10 @@
 
   let db = null;
   let baseModel = null;
+  let baseInferenceModels = null;
   let baseModelPromise = null;
   let baseMetadata = {};
+  let baseModelParamCount = 0;
   let persistenceGranted = false;
   let initPromise = null;
   let trainingQueue = Promise.resolve();
@@ -123,11 +125,7 @@
         if (!core) throw new Error("模型特徵元件未載入");
         metadata.status = "loading";
         emitStats();
-        await ensureTensorflowRuntime();
-        await ensureBaseModel();
-        metadata.status = "base-ready";
-        metadata.error = "";
-        emitStats();
+        void loadBaseAssetMetadata().then(emitStats);
       } catch (error) {
         console.error(error && error.stack ? error.stack : error);
         metadata.status = "error";
@@ -141,10 +139,13 @@
         db = await openDatabase();
         await loadPersonalModel();
         await recoverInterruptedGames();
-        await refreshStats();
         metadata.status = metadata.learnedDecisions > 0 ? "ready" : "base-ready";
         emitStats();
-        scheduleTraining();
+        void refreshStats().then(scheduleTraining).catch((error) => {
+          metadata.status = "degraded";
+          metadata.error = error instanceof Error ? error.message : String(error);
+          emitStats();
+        });
       } catch (error) {
         console.error(error && error.stack ? error.stack : error);
         db = null;
@@ -156,6 +157,32 @@
       return getStats();
     })();
     return initPromise;
+  }
+
+  async function loadBaseAssetMetadata() {
+    try {
+      const [jsonResponse, weightsResponse] = await Promise.all([
+        fetch(BASE_MODEL_URL, { cache: "force-cache" }),
+        fetch("./base-model.weights.bin", { cache: "force-cache" }),
+      ]);
+      const definition = await jsonResponse.json();
+      const specs = definition && definition.weightsManifest && definition.weightsManifest[0]
+        ? definition.weightsManifest[0].weights || []
+        : [];
+      baseModelParamCount = specs.reduce((total, spec) => {
+        const size = Array.isArray(spec.shape) ? spec.shape.reduce((product, value) => product * value, 1) : 0;
+        return total + size;
+      }, 0);
+      baseMetadata = definition.userDefinedMetadata || {};
+      metadata.baseVersion = baseMetadata.version || metadata.baseVersion;
+      metadata.baseModelBytes = Number(jsonResponse.headers.get("content-length")) || 0;
+      metadata.baseModelBytes += (await weightsResponse.blob()).size;
+      metadata.modelParams = baseModelParamCount + PERSONAL_PARAM_COUNT;
+      metadata.modelBytes = metadata.baseModelBytes + metadata.personalModelBytes;
+    } catch {
+      metadata.modelParams = baseModelParamCount + PERSONAL_PARAM_COUNT;
+      metadata.modelBytes = metadata.baseModelBytes + metadata.personalModelBytes;
+    }
   }
 
   async function requestPersistentStorage() {
@@ -243,6 +270,7 @@
         .then(() => baseModel)
         .catch((error) => {
           baseModel = null;
+          baseInferenceModels = null;
           baseModelPromise = null;
           throw error;
         });
@@ -284,6 +312,8 @@
   async function loadBaseModel() {
     baseModel = await tf.loadLayersModel(BASE_MODEL_URL);
     for (const layer of baseModel.layers) layer.trainable = false;
+    baseModelParamCount = baseModel.countParams();
+    baseInferenceModels = core.createInferenceModels(tf, baseModel);
     baseMetadata = baseModel.getUserDefinedMetadata ? await baseModel.getUserDefinedMetadata() || {} : {};
     metadata.baseVersion = baseMetadata.version || metadata.baseVersion;
     metadata.modelParams = baseModel.countParams() + PERSONAL_PARAM_COUNT;
@@ -365,11 +395,12 @@
     await ensureBaseModel();
     const normalizedCandidates = candidates.map(normalizeCandidate).filter(Boolean);
     if (!normalizedCandidates.length) return null;
-    let base = await baseForward(observation, normalizedCandidates);
+    const stateVector = await baseStateForward(observation);
+    let base = await baseCandidateForward(stateVector, normalizedCandidates);
     for (let index = 0; index < normalizedCandidates.length; index += 1) {
       normalizedCandidates[index].consequence[20] = base.continuationValues[index] || 0;
     }
-    base = await baseForward(observation, normalizedCandidates);
+    base = await baseCandidateForward(stateVector, normalizedCandidates);
     const scores = [];
     for (let index = 0; index < normalizedCandidates.length; index += 1) {
       scores.push(personalForward(base.embeddings[index], base.logits[index]).score);
@@ -406,39 +437,56 @@
     };
   }
 
-  async function baseForward(observation, candidates) {
-    const count = candidates.length;
+  async function baseStateForward(observation) {
     const board = core.boardTensor(observation);
     const turn = core.eventTensor(observation.turnEvents, core.TURN_STEPS, observation.ownActor || "self");
     const history = core.eventTensor(observation.historyEvents, core.HISTORY_STEPS, observation.ownActor || "self");
-    const boards = new Float32Array(count * board.length);
-    const turns = new Float32Array(count * turn.length);
-    const histories = new Float32Array(count * history.length);
     const belief = core.beliefVector(observation);
-    const beliefs = new Float32Array(count * belief.length);
+    const inputs = [
+      tf.tensor4d(board, [1, 4, 8, core.BOARD_CHANNELS]),
+      tf.tensor3d(turn, [1, core.TURN_STEPS, core.EVENT_DIM]),
+      tf.tensor3d(history, [1, core.HISTORY_STEPS, core.EVENT_DIM]),
+      tf.tensor2d(belief, [1, core.BELIEF_DIM]),
+    ];
+    let output = null;
+    try {
+      output = baseInferenceModels.stateModel.predict(inputs);
+      return Float32Array.from(await output.data());
+    } finally {
+      for (const tensor of inputs) tensor.dispose();
+      if (output) output.dispose();
+    }
+  }
+
+  async function baseCandidateForward(stateVector, candidates) {
+    const count = candidates.length;
+    const states = new Float32Array(count * stateVector.length);
     const candidateRows = new Float32Array(count * core.CANDIDATE_DIM);
     for (let index = 0; index < count; index += 1) {
-      boards.set(board, index * board.length);
-      turns.set(turn, index * turn.length);
-      histories.set(history, index * history.length);
-      beliefs.set(belief, index * belief.length);
+      states.set(stateVector, index * stateVector.length);
       candidateRows.set(core.candidateVector(candidates[index]), index * core.CANDIDATE_DIM);
     }
     const inputs = [
-      tf.tensor4d(boards, [count, 4, 8, core.BOARD_CHANNELS]),
-      tf.tensor3d(turns, [count, core.TURN_STEPS, core.EVENT_DIM]),
-      tf.tensor3d(histories, [count, core.HISTORY_STEPS, core.EVENT_DIM]),
-      tf.tensor2d(beliefs, [count, core.BELIEF_DIM]),
+      tf.tensor2d(states, [count, core.STATE_DIM]),
       tf.tensor2d(candidateRows, [count, core.CANDIDATE_DIM]),
     ];
-    const outputs = baseModel.predict(inputs);
-    const embeddingData = await outputs[0].data();
-    const logitData = await outputs[1].data();
-    const continuationData = await outputs[2].data();
-    const embeddings = [];
-    for (let index = 0; index < count; index += 1) embeddings.push(Float32Array.from(embeddingData.slice(index * EMBEDDING_DIM, (index + 1) * EMBEDDING_DIM)));
-    for (const tensor of [...inputs, ...outputs]) tensor.dispose();
-    return { embeddings, logits: Array.from(logitData), continuationValues: Array.from(continuationData) };
+    let outputs = null;
+    try {
+      outputs = baseInferenceModels.candidateModel.predict(inputs);
+      const [embeddingData, logitData, continuationData] = await Promise.all([
+        outputs[0].data(),
+        outputs[1].data(),
+        outputs[2].data(),
+      ]);
+      const embeddings = [];
+      for (let index = 0; index < count; index += 1) {
+        embeddings.push(Float32Array.from(embeddingData.slice(index * EMBEDDING_DIM, (index + 1) * EMBEDDING_DIM)));
+      }
+      return { embeddings, logits: Array.from(logitData), continuationValues: Array.from(continuationData) };
+    } finally {
+      for (const tensor of inputs) tensor.dispose();
+      if (outputs) for (const tensor of outputs) tensor.dispose();
+    }
   }
 
   function normalizeCandidate(candidate) {
@@ -514,6 +562,56 @@
       return true;
     }).catch((error) => {
       metadata.status = baseModel ? "degraded" : "error";
+      metadata.error = error instanceof Error ? error.message : String(error);
+      emitStats();
+      return false;
+    });
+    return pendingWriteQueue;
+  }
+
+  function recordPositionChoice(session, positionSnapshot, actor, comboPos, chosenAction, options = {}) {
+    if (!session || session.status !== "active" || !positionSnapshot || !Array.isArray(chosenAction)) return Promise.resolve(false);
+    const now = new Date().toISOString();
+    const id = `decision-v2-${Date.now()}-${session.sequence++}-${Math.random().toString(36).slice(2, 7)}`;
+    const row = {
+      id,
+      gameId: session.id,
+      turnId: options.turnId || `${session.id}-turn-unknown`,
+      recordedAt: now,
+      modelVersionAtCollection: metadata.personalVersion,
+      labelType: options.labelType || "normal",
+      source: options.source || "human",
+      actionType: chosenAction[0],
+      combo: Boolean(options.combo),
+      comboStep: Number(options.comboStep) || 0,
+      phase: options.phase || "middle",
+      chosenAction: [...chosenAction],
+      rejectedAction: Array.isArray(options.rejectedAction) ? [...options.rejectedAction] : null,
+      chosenIndex: -1,
+      rejectedIndex: -1,
+      predictedIndex: -1,
+      chosenRank: 0,
+      observation: null,
+      candidates: null,
+      embeddings: null,
+      baseLogits: null,
+      positionSnapshot: cloneSerializable(positionSnapshot),
+      positionActor: actor || "human",
+      positionComboPos: comboPos ? cloneSerializable(comboPos) : null,
+      pendingEmbedding: true,
+      sequenceIndex: Number(options.sequenceIndex) || 0,
+      voluntaryStop: chosenAction[0] === "stop",
+      darkCapture: chosenAction[0] === "darkCapture",
+    };
+    session.decisionIds.push(id);
+    session.updatedAt = now;
+    pendingWriteQueue = pendingWriteQueue.then(async () => {
+      await init();
+      await putOne(STORES.decisions, row);
+      await putOne(STORES.games, session);
+      return true;
+    }).catch((error) => {
+      metadata.status = baseModel || baseModelParamCount ? "degraded" : "error";
       metadata.error = error instanceof Error ? error.message : String(error);
       emitStats();
       return false;
@@ -704,7 +802,7 @@
 
   async function trainPendingGames() {
     if (gameplayActive) { trainingRequested = true; return; }
-    if (!db || !baseModel) return;
+    if (!db) return;
     const games = await getAll(STORES.games);
     const pending = games.filter((game) => game && game.status !== "active" && game.v2Learned !== true && Array.isArray(game.decisionIds) && game.decisionIds.length);
     if (!pending.length) { await refreshStats(); return; }
@@ -765,10 +863,25 @@
       if (gameplayActive) return false;
       await yieldToPageIdle();
       if (gameplayActive) return false;
+      if ((!row.observation || !Array.isArray(row.candidates)) && row.positionSnapshot && window.DarkChessWorkerApi) {
+        const prepared = await window.DarkChessWorkerApi.preparePosition(
+          row.positionSnapshot,
+          row.positionActor || "human",
+          row.positionComboPos || null
+        );
+        if (!prepared && gameplayActive) return false;
+        if (prepared) {
+          row.observation = prepared.observation;
+          row.candidates = prepared.candidates;
+        }
+      }
       if (!row.observation || !Array.isArray(row.candidates) || !Array.isArray(row.chosenAction)) {
         throw new Error(`學習資料缺少局面：${row.id || "unknown"}`);
       }
-      const context = await prepareDecision(row.observation, row.candidates);
+      const context = window.DarkChessWorkerApi
+        ? await window.DarkChessWorkerApi.evaluatePrepared(row.observation, row.candidates, getInferenceSnapshot())
+        : await prepareDecision(row.observation, row.candidates);
+      if (!context && gameplayActive) return false;
       if (!context) throw new Error(`學習資料無法建立模型特徵：${row.id || "unknown"}`);
       const chosenIndex = context.candidates.findIndex((candidate) => sameAction(candidate.action, row.chosenAction));
       if (chosenIndex < 0) throw new Error(`學習資料找不到示範行動：${row.id || "unknown"}`);
@@ -782,6 +895,8 @@
       row.candidates = context.candidates.map(cloneSerializable);
       row.embeddings = context.embeddings.map((embedding) => [...embedding]);
       row.baseLogits = [...context.baseLogits];
+      row.positionSnapshot = null;
+      row.positionComboPos = null;
       row.pendingEmbedding = false;
       await putOne(STORES.decisions, row);
       await yieldToPage();
@@ -964,16 +1079,18 @@
   async function refreshStats() {
     if (!db) return;
     const [games, decisions] = await Promise.all([getAll(STORES.games), getAll(STORES.decisions)]);
+    if (gameplayActive) return;
     const learnedGames = games.filter((game) => game && game.v2Learned === true && game.decisionIds && game.decisionIds.length);
+    const learnedGameIds = new Set(learnedGames.map((game) => game.id));
     metadata.learnedGames = learnedGames.length;
     metadata.completedGames = learnedGames.filter((game) => game.status === "completed").length;
     metadata.interruptedGames = learnedGames.filter((game) => game.status === "interrupted").length;
-    metadata.learnedDecisions = decisions.filter((row) => learnedGames.some((game) => game.id === row.gameId)).length;
+    metadata.learnedDecisions = decisions.filter((row) => learnedGameIds.has(row.gameId)).length;
     metadata.approvals = decisions.filter((row) => row.labelType === "approval").length;
     metadata.corrections = decisions.filter((row) => row.labelType === "correction").length;
     metadata.demonstrations = decisions.filter((row) => row.labelType === "demonstration").length;
     metadata.persistenceGranted = persistenceGranted;
-    metadata.modelParams = (baseModel ? baseModel.countParams() : 0) + PERSONAL_PARAM_COUNT;
+    metadata.modelParams = (baseModel ? baseModel.countParams() : baseModelParamCount) + PERSONAL_PARAM_COUNT;
     metadata.modelBytes = metadata.baseModelBytes + metadata.personalModelBytes;
     metadata.learningDataBytes = byteLengthOfJson(games) + byteLengthOfJson(decisions);
     metadata.metrics = computeMetrics(decisions, games);
@@ -1142,12 +1259,20 @@
 
   function getStats() { return cloneSerializable(metadata); }
 
+  function getInferenceSnapshot() {
+    return {
+      modelVersion: metadata.personalVersion,
+      params: serializeParameterObject(params),
+    };
+  }
+
   window.DarkChessLearning = {
     init,
     createSession,
     prepareDecision,
     chooseAction,
     recordRawChoice,
+    recordPositionChoice,
     recordChoice,
     recordTurn,
     finishGame,
@@ -1156,6 +1281,7 @@
     importArchive,
     rollbackModel,
     getStats,
+    getInferenceSnapshot,
     subscribe,
   };
 })();

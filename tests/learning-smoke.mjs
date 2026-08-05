@@ -103,16 +103,40 @@ const stats = DarkChessLearning.getStats();
 if (stats.learnedGames !== 1 || stats.learnedDecisions !== 1 || stats.corrections !== 1) {
   throw new Error(`訓練統計不符：${JSON.stringify(stats)}`);
 }
+
+globalThis.DarkChessWorkerApi = {
+  preparePosition: async () => ({ observation, candidates }),
+  evaluatePrepared: async (workerObservation, workerCandidates) => DarkChessLearning.prepareDecision(workerObservation, workerCandidates),
+};
+const deferredSession = DarkChessLearning.createSession();
+await DarkChessLearning.recordPositionChoice(
+  deferredSession,
+  { board: [], playerColor: { human: "red", ai: "black" } },
+  "human",
+  null,
+  candidates[0].action,
+  { labelType: "normal", turnId: `${deferredSession.id}-turn-0`, sequenceIndex: 0 }
+);
+await DarkChessLearning.finishGame(deferredSession, "interrupted", "interrupted");
+for (let retry = 0; retry < 240; retry += 1) {
+  const current = DarkChessLearning.getStats();
+  if (current.status === "ready" && current.learnedGames >= 2) break;
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+const deferredStats = DarkChessLearning.getStats();
+if (deferredStats.learnedGames !== 2 || deferredStats.learnedDecisions !== 2) {
+  throw new Error(`延後特徵學習失敗：${JSON.stringify(deferredStats)}`);
+}
 const archive = await DarkChessLearning.exportArchive();
 if (!(archive instanceof Blob) || archive.size < 100) throw new Error("匯出檔案失敗");
 
 console.log(JSON.stringify({
-  status: stats.status,
-  learnedGames: stats.learnedGames,
-  learnedDecisions: stats.learnedDecisions,
-  corrections: stats.corrections,
-  modelBytes: stats.modelBytes,
-  inferenceMs: stats.averageInferenceMs,
+  status: deferredStats.status,
+  learnedGames: deferredStats.learnedGames,
+  learnedDecisions: deferredStats.learnedDecisions,
+  corrections: deferredStats.corrections,
+  modelBytes: deferredStats.modelBytes,
+  inferenceMs: deferredStats.averageInferenceMs,
   stressInferenceMs,
 }));
 legacyDatabase.close();
