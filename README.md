@@ -26,7 +26,7 @@ python -m http.server 4173
 
 ## 模型與資料保存
 
-瀏覽器 IndexedDB 資料庫名稱：`taiwan-dark-chess-learning`，版本 2。
+瀏覽器 IndexedDB 資料庫名稱：`taiwan-dark-chess-learning-v2`，版本 1。此資料庫與舊版 `taiwan-dark-chess-learning` 完全隔離，舊模型或舊棋譜異常不會阻塞新版 AI；新版會從乾淨的個人模型開始累積。
 
 - `games`：棋局與完成／中斷狀態
 - `turns`：完整回合與連吃事件

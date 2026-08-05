@@ -25,10 +25,34 @@ Object.defineProperty(globalThis, "navigator", {
   value: { storage: { persisted: async () => true, persist: async () => true } },
 });
 
+const legacyDatabase = await new Promise((resolve, reject) => {
+  const request = indexedDB.open("taiwan-dark-chess-learning", 1);
+  request.onupgradeneeded = () => {
+    const database = request.result;
+    database.createObjectStore("games", { keyPath: "id" });
+    database.createObjectStore("models", { keyPath: "id" });
+  };
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+{
+  const transaction = legacyDatabase.transaction(["games", "models"], "readwrite");
+  transaction.objectStore("games").put({ id: "legacy-corrupt-game", status: "active", decisions: [{ broken: true }] });
+  transaction.objectStore("models").put({ id: "player-style-v1", weights: [NaN, Infinity] });
+  await new Promise((resolve, reject) => {
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
 vm.runInThisContext(fs.readFileSync(new URL("../model-core.js", import.meta.url), "utf8"), { filename: "model-core.js" });
 vm.runInThisContext(fs.readFileSync(new URL("../learning.js", import.meta.url), "utf8"), { filename: "learning.js" });
 
 await DarkChessLearning.init();
+const initialStats = DarkChessLearning.getStats();
+if (initialStats.status !== "base-ready" || initialStats.learnedGames !== 0 || initialStats.learnedDecisions !== 0) {
+  throw new Error(`新版資料庫未隔離舊模型：${JSON.stringify(initialStats)}`);
+}
 const observation = {
   boardChannels: Array(4 * 8 * 25).fill(0),
   belief: Array(14).fill(1 / 14),
@@ -77,3 +101,4 @@ console.log(JSON.stringify({
   modelBytes: stats.modelBytes,
   inferenceMs: stats.averageInferenceMs,
 }));
+legacyDatabase.close();

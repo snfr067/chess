@@ -3,8 +3,8 @@
 
   const core = window.DarkChessModelCore;
   const tf = window.tf;
-  const DB_NAME = "taiwan-dark-chess-learning";
-  const DB_VERSION = 2;
+  const DB_NAME = "taiwan-dark-chess-learning-v2";
+  const DB_VERSION = 1;
   const STORES = { games: "games", turns: "turns", decisions: "decisions", models: "models", metrics: "metrics" };
   const MODEL_SCHEMA = 2;
   const MODEL_PREFIX = "player-style-v2-";
@@ -25,6 +25,7 @@
 
   let db = null;
   let baseModel = null;
+  let baseModelPromise = null;
   let baseMetadata = {};
   let persistenceGranted = false;
   let initPromise = null;
@@ -117,20 +118,33 @@
         if (!core || !tf) throw new Error("模型執行元件未載入");
         metadata.status = "loading";
         emitStats();
+        await ensureBaseModel();
+        metadata.status = "base-ready";
+        metadata.error = "";
+        emitStats();
+      } catch (error) {
+        console.error(error && error.stack ? error.stack : error);
+        metadata.status = "error";
+        metadata.error = error instanceof Error ? error.message : String(error);
+        emitStats();
+        return getStats();
+      }
+
+      try {
         persistenceGranted = await requestPersistentStorage();
         db = await openDatabase();
-        await loadBaseModel();
         await loadPersonalModel();
         await recoverInterruptedGames();
-        await migrateV1Games();
         await refreshStats();
         metadata.status = metadata.learnedDecisions > 0 ? "ready" : "base-ready";
         emitStats();
         scheduleTraining();
       } catch (error) {
         console.error(error && error.stack ? error.stack : error);
-        metadata.status = "error";
+        db = null;
+        metadata.status = "degraded";
         metadata.error = error instanceof Error ? error.message : String(error);
+        metadata.persistenceGranted = false;
         emitStats();
       }
       return getStats();
@@ -160,7 +174,10 @@
         ensureStore(database, upgradeTransaction, STORES.models, "id", []);
         ensureStore(database, upgradeTransaction, STORES.metrics, "id", []);
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        request.result.onversionchange = () => request.result.close();
+        resolve(request.result);
+      };
       request.onerror = () => reject(request.error || new Error("無法開啟棋路資料庫"));
       request.onblocked = () => reject(new Error("棋路資料庫被其他頁面占用"));
     });
@@ -189,6 +206,7 @@
   }
 
   async function getAll(storeName) {
+    if (!db) return [];
     const transaction = db.transaction(storeName, "readonly");
     const rows = await requestResult(transaction.objectStore(storeName).getAll());
     await transactionDone(transaction);
@@ -196,6 +214,7 @@
   }
 
   async function getOne(storeName, id) {
+    if (!db) return null;
     const transaction = db.transaction(storeName, "readonly");
     const row = await requestResult(transaction.objectStore(storeName).get(id));
     await transactionDone(transaction);
@@ -203,9 +222,25 @@
   }
 
   async function putOne(storeName, value) {
+    if (!db) return false;
     const transaction = db.transaction(storeName, "readwrite");
     transaction.objectStore(storeName).put(cloneSerializable(value));
     await transactionDone(transaction);
+    return true;
+  }
+
+  async function ensureBaseModel() {
+    if (baseModel) return baseModel;
+    if (!baseModelPromise) {
+      baseModelPromise = loadBaseModel()
+        .then(() => baseModel)
+        .catch((error) => {
+          baseModel = null;
+          baseModelPromise = null;
+          throw error;
+        });
+    }
+    return baseModelPromise;
   }
 
   async function loadBaseModel() {
@@ -247,7 +282,10 @@
     const restored = {};
     for (const [name, values] of Object.entries(fallback)) {
       const candidate = source && source[name];
-      restored[name] = candidate && candidate.length === values.length ? Float32Array.from(candidate) : values;
+      const valid = candidate
+        && candidate.length === values.length
+        && Array.from(candidate).every((value) => Number.isFinite(Number(value)));
+      restored[name] = valid ? Float32Array.from(candidate) : values;
     }
     return restored;
   }
@@ -255,12 +293,14 @@
   function restoreOptimizer(source) {
     const fallback = createOptimizerState();
     if (!source) return fallback;
-    const restored = { step: Number(source.step) || 0, first: {}, second: {} };
+    const restored = { step: Number.isFinite(Number(source.step)) ? Math.max(0, Number(source.step)) : 0, first: {}, second: {} };
     for (const name of Object.keys(params)) {
-      restored.first[name] = source.first && source.first[name] && source.first[name].length === params[name].length
-        ? Float32Array.from(source.first[name]) : fallback.first[name];
-      restored.second[name] = source.second && source.second[name] && source.second[name].length === params[name].length
-        ? Float32Array.from(source.second[name]) : fallback.second[name];
+      const first = source.first && source.first[name];
+      const second = source.second && source.second[name];
+      restored.first[name] = first && first.length === params[name].length && Array.from(first).every((value) => Number.isFinite(Number(value)))
+        ? Float32Array.from(first) : fallback.first[name];
+      restored.second[name] = second && second.length === params[name].length && Array.from(second).every((value) => Number.isFinite(Number(value)))
+        ? Float32Array.from(second) : fallback.second[name];
     }
     return restored;
   }
@@ -280,13 +320,18 @@
       turnIds: [],
       sequence: 0,
     };
-    if (db) void putOne(STORES.games, session);
+    if (db) void putOne(STORES.games, session).catch((error) => {
+      metadata.status = "degraded";
+      metadata.error = error instanceof Error ? error.message : String(error);
+      emitStats();
+    });
     return session;
   }
 
   async function prepareDecision(observation, candidates) {
     const startedAt = performance.now();
     if (!observation || !Array.isArray(candidates) || candidates.length === 0) return null;
+    await ensureBaseModel();
     const normalizedCandidates = candidates.map(normalizeCandidate).filter(Boolean);
     if (!normalizedCandidates.length) return null;
     let base = await baseForward(observation, normalizedCandidates);

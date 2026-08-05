@@ -1,14 +1,14 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-learning-v2-20260805-tactical-imitation";
+const CACHE_NAME = "taiwan-dark-chess-pwa-learning-v2-20260805-runtime-recovery";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=learning-v2-20260805-tactical-imitation",
+  "./style.css?v=learning-v2-20260805-runtime-recovery",
   "./vendor/tf.min.js?v=4.22.0",
-  "./model-core.js?v=learning-v2-20260805-tactical-imitation",
+  "./model-core.js?v=learning-v2-20260805-runtime-recovery",
   "./base-model.json",
   "./base-model.weights.bin",
-  "./learning.js?v=learning-v2-20260805-tactical-imitation",
-  "./app.js?v=learning-v2-20260805-tactical-imitation",
+  "./learning.js?v=learning-v2-20260805-runtime-recovery",
+  "./app.js?v=learning-v2-20260805-runtime-recovery",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg"
@@ -53,7 +53,7 @@ self.addEventListener("fetch", (event) => {
         })
         .catch(() => {
           clearTimeout(timeoutId);
-          return caches.match("./index.html");
+          return caches.open(CACHE_NAME).then((cache) => cache.match("./index.html"));
         })
     );
   
@@ -61,13 +61,13 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
+    caches.open(CACHE_NAME).then((cache) => cache.match(request).then((cached) => {
       const network = fetch(request).then((response) => {
         const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        cache.put(request, copy);
         return response;
       });
-      return cached || network.catch(() => caches.match("./index.html"));
-    })
+      return cached || network.catch(() => cache.match("./index.html"));
+    }))
   );
 });

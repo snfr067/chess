@@ -1,4 +1,4 @@
-const APP_VERSION = "learning-v2-20260805-tactical-imitation";
+const APP_VERSION = "learning-v2-20260805-runtime-recovery";
 
 const ROWS = 4;
 const COLS = 8;
@@ -220,7 +220,7 @@ function newGame(startTurn = true) {
     state.aiThinking = true;
     setStatus("AI 正在行動", "");
     render();
-    window.setTimeout(aiMove, 40);
+    scheduleAiMove();
   } else {
     setStatus("請先翻一顆棋。", "");
     render();
@@ -230,7 +230,9 @@ function newGame(startTurn = true) {
 function finishCurrentLearningGame(status, outcome) {
   if (!state || !state.learningGame || !window.DarkChessLearning) return;
   if (state.learningGame.status !== "active") return;
-  void window.DarkChessLearning.finishGame(state.learningGame, status, outcome);
+  void window.DarkChessLearning.finishGame(state.learningGame, status, outcome).catch((error) => {
+    console.error("Unable to finish the learning game.", error);
+  });
 }
 
 function interruptCurrentGame() {
@@ -278,6 +280,8 @@ function persistCurrentLearningTurn(partial = false) {
     actions: state.turnActions.map((row) => ({ ...row, action: [...row.action] })),
     partial,
     completedAt: new Date().toISOString(),
+  }).catch((error) => {
+    console.error("Unable to save the learning turn.", error);
   });
 }
 
@@ -570,6 +574,7 @@ function renderLearningStats(stats = null) {
     "base-ready": "基礎模型已就緒",
     training: "更新中",
     ready: "已更新",
+    degraded: "模型可用／儲存待修復",
     error: "更新失敗",
   };
   dom.learningModelStatus.textContent = statusLabels[modelStats.status] || "準備中";
@@ -598,7 +603,9 @@ function renderLearningStats(stats = null) {
   dom.learningSequenceExact.textContent = `${formatPercent(metrics.sequenceExact || 0)}／前綴 ${formatPercent(metrics.sequencePrefix || 0)}`;
   dom.learningInferenceTime.textContent = `平均 ${Math.round(modelStats.averageInferenceMs || 0)}／P95 ${Math.round(modelStats.p95InferenceMs || 0)} ms`;
   dom.learningTrainingInfo.textContent = `${modelStats.lastTrainingRows || 0} 筆／${Math.round(modelStats.lastTrainingMs || 0)} ms`;
-  dom.learningPersistence.textContent = modelStats.persistenceGranted ? "已取得持久儲存" : "一般網站儲存";
+  dom.learningPersistence.textContent = modelStats.status === "degraded"
+    ? `暫時使用基礎模型：${modelStats.error || "學習資料庫無法使用"}`
+    : modelStats.persistenceGranted ? "已取得持久儲存" : "一般網站儲存";
 }
 
 function formatPercent(value) { return `${(Math.max(0, Number(value) || 0) * 100).toFixed(1)}%`; }
@@ -944,7 +951,6 @@ async function onCellClick(r, c) {
     }
     const action = ["flip", r, c];
     const result = await performVisibleAction(action, actor, { preview: false });
-
     if (!result.invalid) {
       if (correctionInput) await completeCorrectionInput(action, result);
       else endTurn();
@@ -1068,12 +1074,63 @@ function endTurn() {
     state.aiThinking = true;
     setStatus("AI 正在模仿您的棋路", "");
     render();
-    window.setTimeout(aiMove, 40);
+    scheduleAiMove();
   } else {
     state.aiThinking = false;
     setStatus("輪到您", "");
     render();
   }
+}
+
+function scheduleAiMove() {
+  window.setTimeout(() => {
+    void aiMove().catch(recoverAiMoveFailure);
+  }, 40);
+}
+
+async function recoverAiMoveFailure(error) {
+  console.error("AI turn failed; recovering the turn.", error);
+  if (!state || state.currentPlayer !== AI) return;
+  aiRunId += 1;
+  cancelAiCorrection();
+  state.locked = false;
+  state.pendingAction = null;
+  state.animation = null;
+  state.aiThinking = true;
+
+  try {
+    const alreadyMoved = state.turnActions.some((event) => event && event.actor === AI);
+    if (!alreadyMoved) {
+      const candidates = generateLearningCandidates(AI);
+      if (!candidates.length) throw new Error("AI 沒有可執行行動");
+      const choice = chooseEmergencyAiAction(candidates, nowMs(), error instanceof Error ? error.message : String(error));
+      const result = await performVisibleAction(choice.action, AI, { stepStartedAt: nowMs() });
+      const winner = checkWinner(state.board);
+      if (winner !== null) {
+        state.aiThinking = false;
+        render();
+        showWinner(winner);
+        return;
+      }
+      if (result.invalid) throw new Error("AI 復原行動無效");
+    }
+  } catch (recoveryError) {
+    console.error("AI turn recovery failed.", recoveryError);
+    state.locked = false;
+    state.pendingAction = null;
+    state.aiThinking = false;
+    if (state.turnColor === null) {
+      state.currentPlayer = HUMAN;
+      setStatus("請先翻一顆棋。", "");
+      render();
+      return;
+    }
+  }
+
+  state.locked = false;
+  state.pendingAction = null;
+  state.aiThinking = false;
+  endTurn();
 }
 
 async function aiMove() {
@@ -1102,10 +1159,11 @@ async function aiMove() {
     } else {
       choice = await chooseLearnedAiAction(comboPos);
       if (!isAiRunActive(runId)) return;
-      if (!choice || !choice.action) break;
+      if (!choice || !choice.action) throw new Error("AI 模型沒有回傳行動");
       action = choice.action;
 
-      if (loadCorrectionMode()) {
+      const isInitialFlip = state.turnColor === null && action[0] === "flip";
+      if (loadCorrectionMode() && !isInitialFlip) {
         const response = await requestAiCorrection(choice, comboPos);
         if (!isAiRunActive(runId) || response === "cancel") return;
         if (response === "approve") {
@@ -1163,8 +1221,15 @@ async function chooseLearnedAiAction(comboPos = null) {
   if (!state) return null;
   const startedAt = nowMs();
   const candidates = generateLearningCandidates(AI, comboPos);
-  if (candidates.length === 0 || !window.DarkChessLearning) return null;
-  const choice = await window.DarkChessLearning.chooseAction(buildLearningObservation(AI, comboPos), candidates);
+  if (candidates.length === 0) return null;
+  if (!window.DarkChessLearning) return chooseEmergencyAiAction(candidates, startedAt, "learning-module-missing");
+  let choice;
+  try {
+    choice = await window.DarkChessLearning.chooseAction(buildLearningObservation(AI, comboPos), candidates);
+  } catch (error) {
+    console.error("AI model inference failed; using emergency public-information score.", error);
+    return chooseEmergencyAiAction(candidates, startedAt, error instanceof Error ? error.message : String(error));
+  }
   if (!choice) return null;
 
   state.aiSearchInfo = {
@@ -1177,6 +1242,52 @@ async function chooseLearnedAiAction(comboPos = null) {
   };
   choice.totalElapsedMs = nowMs() - startedAt;
   return choice;
+}
+
+function chooseEmergencyAiAction(candidates, startedAt, reason) {
+  let bestIndex = 0;
+  let bestScore = -Infinity;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    const action = candidate.action || [];
+    const consequence = candidate.consequence || [];
+    let score = 0;
+    score += (Number(consequence[21]) || 0) * 100000;
+    score += (Number(consequence[19]) || 0) * 4200;
+    score += (Number(consequence[2]) || 0) * 1800;
+    score -= (Number(consequence[3]) || 0) * 5200;
+    score -= (Number(consequence[8]) || 0) * 1800;
+    score += (Number(consequence[17]) || 0) * 400;
+    score += (Number(consequence[12]) || 0) * 180;
+    if (action[0] === "flip") {
+      const row = Number(action[1]) || 0;
+      const col = Number(action[2]) || 0;
+      score += 1 - (Math.abs(row - 1.5) + Math.abs(col - 3.5)) / 8;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+  const elapsedMs = nowMs() - startedAt;
+  state.aiSearchInfo = {
+    engine: "tactical-imitation-v2-recovery",
+    elapsedMs: Math.round(elapsedMs),
+    learnedGames: window.DarkChessLearning ? window.DarkChessLearning.getStats().learnedGames : 0,
+    learnedDecisions: window.DarkChessLearning ? window.DarkChessLearning.getStats().learnedDecisions : 0,
+    confidence: 0,
+    candidates: candidates.length,
+    recoveryReason: reason,
+  };
+  return {
+    action: [...candidates[bestIndex].action],
+    confidence: 0,
+    elapsedMs,
+    totalElapsedMs: elapsedMs,
+    context: null,
+    candidateIndex: bestIndex,
+    recovery: true,
+  };
 }
 
 function isAiRunActive(runId) { return Boolean(state && state.aiThinking && state.currentPlayer === AI && runId === aiRunId); }
@@ -1207,10 +1318,8 @@ async function performVisibleAction(action, actor, options = {}) {
   if (action[0] === "flip" && state.turnColor === null) {
     const [, r, c] = action;
     const flippedPiece = state.board[r][c];
-
     if (flippedPiece) {
       const opponentActor = actor === HUMAN ? AI : HUMAN;
-
       state.playerColor[actor] = flippedPiece.color;
       state.playerColor[opponentActor] = opponentColor(flippedPiece.color);
       state.turnColor = flippedPiece.color;
@@ -1739,7 +1848,7 @@ function applyFixedLandscapeStage() {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js?v=learning-v2-20260805-tactical-imitation").catch(() => {});
+    navigator.serviceWorker.register(`./service-worker.js?v=${APP_VERSION}`).catch(() => {});
   });
 }
 
@@ -1752,11 +1861,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   syncSettingsUI();
   createBoardButtons();
   showView("home");
+  newGame(false);
+  registerServiceWorker();
   if (window.DarkChessLearning) {
     window.DarkChessLearning.subscribe(renderLearningStats);
     await window.DarkChessLearning.init();
     renderLearningStats();
   }
-  newGame(false);
-  registerServiceWorker();
 });
