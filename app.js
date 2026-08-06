@@ -80,7 +80,7 @@ function saveAiDelaySeconds(value) { localStorage.setItem("darkChessAiDelaySecon
 function loadAiDelayMs() { return Math.round(loadAiDelaySeconds() * 1000); }
 function formatSeconds(value) { return `${Number.parseFloat(value).toFixed(1)} 秒`; }
 function isComboRuleEnabled() { return state && typeof state.comboRule === "boolean" ? state.comboRule : loadComboRule(); }
-function actorDelay(actor, ratio = 1) { return actor === AI ? Math.max(120, Math.round(loadAiDelayMs() * ratio)) : Math.max(45, Math.round(110 * ratio)); }
+function actorDelay(actor, ratio = 1) { return Math.max(120, Math.round(loadAiDelayMs() * ratio)); }
 function loadCorrectionMode() { const saved = localStorage.getItem("darkChessCorrectionMode"); return saved === null ? true : saved === "true"; }
 function saveCorrectionMode(enabled) { localStorage.setItem("darkChessCorrectionMode", enabled ? "true" : "false"); }
 function isCorrectionInputActive() { return Boolean(state && state.correction && ["change", "takeover"].includes(state.correction.inputMode)); }
