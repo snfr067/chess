@@ -1,19 +1,19 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-pytorch-onnx-v1-20260812";
+const CACHE_NAME = "taiwan-dark-chess-pwa-pytorch-onnx-v2-20260812";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=pytorch-onnx-v1-20260812",
+  "./style.css?v=pytorch-onnx-v2-20260812",
   "./vendor/tf.min.js?v=4.22.0",
   "./vendor/ort.min.js?v=1.22.0",
   "./vendor/ort-wasm-simd-threaded.mjs",
   "./vendor/ort-wasm-simd-threaded.wasm",
-  "./model-core.js?v=pytorch-onnx-v1-20260812",
-  "./pytorch-model-core.js?v=pytorch-onnx-v1-20260812",
+  "./model-core.js?v=pytorch-onnx-v2-20260812",
+  "./pytorch-model-core.js?v=pytorch-onnx-v2-20260812",
   "./base-model.json",
   "./base-model.weights.bin",
-  "./learning.js?v=pytorch-onnx-v1-20260812",
-  "./app.js?v=pytorch-onnx-v1-20260812",
-  "./ai-worker.js?v=pytorch-onnx-v1-20260812",
+  "./learning.js?v=pytorch-onnx-v2-20260812",
+  "./app.js?v=pytorch-onnx-v2-20260812",
+  "./ai-worker.js?v=pytorch-onnx-v2-20260812",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg"
@@ -34,8 +34,26 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const request = event.request;
+  const url = new URL(request.url);
   const accept = request.headers.get("accept") || "";
   const isNavigation = request.mode === "navigate" || accept.includes("text/html");
+
+  if (url.pathname.endsWith("/final_model.onnx")) {
+    event.respondWith(
+      fetch(request, { cache: "no-store" })
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request.url, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.open(CACHE_NAME).then((cache) => cache.match(request.url)).then((cached) => (
+          cached || new Response("final_model.onnx unavailable", { status: 503 })
+        )))
+    );
+    return;
+  }
 
   if (isNavigation) {
     const controller = new AbortController();
@@ -68,11 +86,13 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     caches.open(CACHE_NAME).then((cache) => cache.match(request).then((cached) => {
       const network = fetch(request).then((response) => {
-        const copy = response.clone();
-        cache.put(request, copy);
+        if (response.ok) {
+          const copy = response.clone();
+          cache.put(request, copy);
+        }
         return response;
       });
-      return cached || network.catch(() => cache.match("./index.html"));
+      return cached || network;
     }))
   );
 });

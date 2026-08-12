@@ -5,9 +5,9 @@ globalThis.window = globalThis;
 importScripts(
   "./vendor/ort.min.js?v=1.22.0",
   "./vendor/tf.min.js?v=4.22.0",
-  "./model-core.js?v=pytorch-onnx-v1-20260812",
-  "./pytorch-model-core.js?v=pytorch-onnx-v1-20260812",
-  "./app.js?v=pytorch-onnx-v1-20260812"
+  "./model-core.js?v=pytorch-onnx-v2-20260812",
+  "./pytorch-model-core.js?v=pytorch-onnx-v2-20260812",
+  "./app.js?v=pytorch-onnx-v2-20260812"
 );
 
 const WORKER_EMBEDDING_DIM = 64;
@@ -17,10 +17,21 @@ let workerEnginePromise = null;
 let pytorchSession = null;
 let pytorchModelName = null;
 
+const PYTORCH_MODEL_VERSION = "pytorch-onnx-v2-20260812";
+
+function modelLoadErrorText(error) {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error || "未知錯誤");
+}
+
 async function loadPytorchModel(source, name) {
   ort.env.wasm.numThreads = 1;
   ort.env.wasm.simd = true;
-  ort.env.wasm.wasmPaths = "./vendor/";
+  const runtimeBaseUrl = new URL("./vendor/", self.location.href);
+  ort.env.wasm.wasmPaths = {
+    mjs: new URL("ort-wasm-simd-threaded.mjs", runtimeBaseUrl).href,
+    wasm: new URL("ort-wasm-simd-threaded.wasm", runtimeBaseUrl).href,
+  };
   const session = await ort.InferenceSession.create(source, {
     executionProviders: ["wasm"],
     graphOptimizationLevel: "all",
@@ -36,13 +47,22 @@ async function loadPytorchModel(source, name) {
 
 async function tryLoadHostedPytorchModel() {
   try {
-    const response = await fetch("./final_model.onnx", { cache: "no-store" });
+    const modelUrl = new URL("./final_model.onnx", self.location.href);
+    modelUrl.searchParams.set("v", PYTORCH_MODEL_VERSION);
+    const response = await fetch(modelUrl.href, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const bytes = await response.arrayBuffer();
     const result = await loadPytorchModel(bytes, "final_model.onnx");
-    self.postMessage({ type: "model-status", message: result.message });
-  } catch {
-    self.postMessage({ type: "model-status", message: "尚未載入 GPU 訓練模型；目前使用內建棋力" });
+    self.postMessage({ type: "model-status", status: "loaded", message: result.message });
+  } catch (error) {
+    const detail = modelLoadErrorText(error);
+    console.error("Unable to load final_model.onnx.", error);
+    self.postMessage({
+      type: "model-status",
+      status: "error",
+      error: detail,
+      message: `final_model.onnx 載入失敗：${detail}；目前使用內建棋力`,
+    });
   }
 }
 

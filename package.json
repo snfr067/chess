@@ -12,6 +12,8 @@
     "test:model-equivalence": "node tests/model-inference-equivalence.mjs",
     "test:worker": "node tests/ai-worker-smoke.mjs",
     "test:pytorch-features": "node tests/pytorch-feature-smoke.mjs",
+    "test:onnx-runtime": "node tests/onnx-runtime-real.mjs",
+    "test:model-cache": "node tests/service-worker-model-cache.mjs",
     "train:base": "node tools/train-base.mjs"
   },
   "devDependencies": {

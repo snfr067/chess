@@ -1,4 +1,4 @@
-const APP_VERSION = "pytorch-onnx-v1-20260812";
+const APP_VERSION = "pytorch-onnx-v2-20260812";
 
 const ROWS = 4;
 const COLS = 8;
@@ -1046,6 +1046,7 @@ function ensureAiWorker() {
       }
       if (message.type === "model-status") {
         if (dom.pytorchModelStatus) dom.pytorchModelStatus.textContent = message.message || "使用內建棋力";
+        if (message.status === "error") console.error("GPU training model failed to load.", message.error || "unknown error");
         return;
       }
       if (!["result", "prepared", "evaluated", "model-loaded", "error"].includes(message.type)) return;

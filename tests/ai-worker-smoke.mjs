@@ -17,11 +17,19 @@ testTf.loadLayersModel = async () => originalLoadLayersModel(tf.io.fromMemory({
 
 const emitted = [];
 let messageHandler = null;
+let observedWasmPaths = null;
 const context = vm.createContext({
   console,
   performance,
   setTimeout,
   clearTimeout,
+  URL,
+  location: { href: "https://example.test/chess/ai-worker.js?v=pytorch-onnx-v2-20260812" },
+  fetch: async () => ({
+    ok: true,
+    status: 200,
+    arrayBuffer: async () => new ArrayBuffer(8),
+  }),
   tf: testTf,
   ort: {
     env: { wasm: {} },
@@ -29,7 +37,9 @@ const context = vm.createContext({
       constructor(type, data, dims) { this.type = type; this.data = data; this.dims = dims; }
     },
     InferenceSession: {
-      create: async () => ({
+      create: async () => {
+        observedWasmPaths = { ...context.ort.env.wasm.wasmPaths };
+        return ({
         inputNames: ["board", "global_features", "history", "actions"],
         run: async (feeds) => {
           const count = feeds.actions.dims[1];
@@ -39,7 +49,8 @@ const context = vm.createContext({
             state_value: { data: new Float32Array(1) },
           };
         },
-      }),
+        });
+      },
     },
   },
 });
@@ -62,6 +73,13 @@ for (let retry = 0; retry < 200 && !emitted.some((row) => row.type === "ready");
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 if (!messageHandler || !emitted.some((row) => row.type === "ready")) throw new Error("AI 背景模型未完成預熱");
+for (let retry = 0; retry < 200 && !emitted.some((row) => row.type === "model-status"); retry += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+const hostedStatus = emitted.find((row) => row.type === "model-status");
+if (!hostedStatus || hostedStatus.status !== "loaded") throw new Error(`網站 ONNX 模型未自動載入：${JSON.stringify(hostedStatus)}`);
+if (observedWasmPaths?.mjs !== "https://example.test/chess/vendor/ort-wasm-simd-threaded.mjs") throw new Error(`ONNX mjs 路徑錯誤：${observedWasmPaths?.mjs}`);
+if (observedWasmPaths?.wasm !== "https://example.test/chess/vendor/ort-wasm-simd-threaded.wasm") throw new Error(`ONNX wasm 路徑錯誤：${observedWasmPaths?.wasm}`);
 
 const definitions = [
   ["K", 1], ["A", 2], ["E", 2], ["R", 2], ["N", 2], ["C", 2], ["P", 5],

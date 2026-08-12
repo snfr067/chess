@@ -17,7 +17,7 @@ const optional = new Set(["difficultySelect", "difficultyHelp"]);
 const missing = ids.filter((id) => !optional.has(id) && !html.includes(`id="${id}"`));
 if (missing.length) throw new Error(`HTML 缺少元件：${missing.join(", ")}`);
 
-const assets = ["vendor/tf.min.js", "vendor/ort.min.js", "vendor/ort-wasm-simd-threaded.mjs", "vendor/ort-wasm-simd-threaded.wasm", "model-core.js", "pytorch-model-core.js", "base-model.json", "base-model.weights.bin", "learning.js", "app.js", "ai-worker.js"];
+const assets = ["vendor/tf.min.js", "vendor/ort.min.js", "vendor/ort-wasm-simd-threaded.mjs", "vendor/ort-wasm-simd-threaded.wasm", "final_model.onnx", "model-core.js", "pytorch-model-core.js", "base-model.json", "base-model.weights.bin", "learning.js", "app.js", "ai-worker.js"];
 for (const asset of assets) {
   if (!fs.existsSync(asset)) throw new Error(`缺少應用資產：${asset}`);
 }
