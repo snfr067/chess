@@ -1,17 +1,90 @@
-/* global tf, DarkChessModelCore, DarkChessWorkerGame */
+/* global tf, ort, DarkChessModelCore, DarkChessPyTorchModelCore, DarkChessWorkerGame */
 "use strict";
 
 globalThis.window = globalThis;
 importScripts(
+  "./vendor/ort.min.js?v=1.22.0",
   "./vendor/tf.min.js?v=4.22.0",
-  "./model-core.js?v=learning-v2-20260805-exact-worker",
-  "./app.js?v=learning-v2-20260805-exact-worker"
+  "./model-core.js?v=pytorch-onnx-v1-20260812",
+  "./pytorch-model-core.js?v=pytorch-onnx-v1-20260812",
+  "./app.js?v=pytorch-onnx-v1-20260812"
 );
 
 const WORKER_EMBEDDING_DIM = 64;
 const WORKER_STYLE_DIM = 16;
 const WORKER_RANK_DIM = 8;
 let workerEnginePromise = null;
+let pytorchSession = null;
+let pytorchModelName = null;
+
+async function loadPytorchModel(source, name) {
+  ort.env.wasm.numThreads = 1;
+  ort.env.wasm.simd = true;
+  ort.env.wasm.wasmPaths = "./vendor/";
+  const session = await ort.InferenceSession.create(source, {
+    executionProviders: ["wasm"],
+    graphOptimizationLevel: "all",
+  });
+  const requiredInputs = ["board", "global_features", "history", "actions"];
+  for (const input of requiredInputs) {
+    if (!session.inputNames.includes(input)) throw new Error(`模型缺少輸入：${input}`);
+  }
+  pytorchSession = session;
+  pytorchModelName = name;
+  return { message: `已使用 ${name} 作為下棋 AI`, name };
+}
+
+async function tryLoadHostedPytorchModel() {
+  try {
+    const response = await fetch("./final_model.onnx", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const bytes = await response.arrayBuffer();
+    const result = await loadPytorchModel(bytes, "final_model.onnx");
+    self.postMessage({ type: "model-status", message: result.message });
+  } catch {
+    self.postMessage({ type: "model-status", message: "尚未載入 GPU 訓練模型；目前使用內建棋力" });
+  }
+}
+
+function softmax(scores) {
+  const maximum = Math.max(...scores);
+  const values = scores.map((score) => Math.exp(Math.max(-30, Math.min(30, score - maximum))));
+  const total = values.reduce((sum, value) => sum + value, 0) || 1;
+  return values.map((value) => value / total);
+}
+
+async function pytorchEvaluate(snapshot, prepared) {
+  const core = DarkChessPyTorchModelCore;
+  const count = prepared.candidates.length;
+  const encoded = core.encode(snapshot, prepared.candidates);
+  const outputs = await pytorchSession.run({
+    board: new ort.Tensor("float32", encoded.board, [1, core.BOARD_CHANNELS, 4, 8]),
+    global_features: new ort.Tensor("float32", encoded.global, [1, core.GLOBAL_DIM]),
+    history: new ort.Tensor("float32", encoded.history, [1, core.HISTORY_LENGTH, core.HISTORY_DIM]),
+    actions: new ort.Tensor("float32", encoded.actions, [1, count, core.ACTION_DIM]),
+  });
+  const logitsTensor = outputs.policy_logits || outputs[Object.keys(outputs)[0]];
+  const valueTensor = outputs.candidate_values || outputs[Object.keys(outputs)[1]];
+  const scores = Array.from(logitsTensor.data);
+  const candidateValues = valueTensor ? Array.from(valueTensor.data) : Array(count).fill(0);
+  const order = scores.map((score, index) => ({ score, index }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((row) => row.index);
+  return {
+    observation: prepared.observation,
+    candidates: prepared.candidates,
+    embeddings: Array.from({ length: count }, () => Array(WORKER_EMBEDDING_DIM).fill(0)),
+    baseLogits: scores,
+    continuationValues: candidateValues,
+    scores,
+    probabilities: softmax(scores),
+    order,
+    modelVersion: 0,
+    preparedAt: new Date().toISOString(),
+    source: "pytorch-onnx",
+    modelName: pytorchModelName,
+  };
+}
 
 function repeatVector(source, count) {
   const result = new Float32Array(count * source.length);
@@ -198,7 +271,9 @@ async function workerThink(message) {
   const startedAt = performance.now();
   const prepared = workerPreparePosition(message.snapshot, "ai", message.comboPos);
   if (!prepared.candidates.length) throw new Error("no-legal-action");
-  const context = await workerEvaluate(prepared.observation, prepared.candidates, message.learningSnapshot);
+  const context = pytorchSession
+    ? await pytorchEvaluate(message.snapshot, prepared)
+    : await workerEvaluate(prepared.observation, prepared.candidates, message.learningSnapshot);
   const bestIndex = context.order[0];
   return {
     action: [...context.candidates[bestIndex].action],
@@ -212,8 +287,13 @@ async function workerThink(message) {
 
 self.addEventListener("message", async (event) => {
   const message = event.data || {};
-  if (!["think", "prepare", "evaluate"].includes(message.type)) return;
+  if (!["think", "prepare", "evaluate", "load-onnx-model"].includes(message.type)) return;
   try {
+    if (message.type === "load-onnx-model") {
+      const result = await loadPytorchModel(message.bytes, message.name || "選取的 ONNX 模型");
+      self.postMessage({ type: "model-loaded", id: message.id, result });
+      return;
+    }
     if (message.type === "think") {
       self.postMessage({ type: "result", id: message.id, choice: await workerThink(message) });
       return;
@@ -243,3 +323,4 @@ self.addEventListener("message", async (event) => {
 void workerEnsureEngine().then(() => self.postMessage({ type: "ready" })).catch((error) => {
   self.postMessage({ type: "worker-load-error", error: error instanceof Error ? error.message : String(error) });
 });
+void tryLoadHostedPytorchModel();

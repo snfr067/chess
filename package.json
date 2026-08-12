@@ -11,11 +11,15 @@
     "test:degraded": "node tests/learning-storage-failure.mjs",
     "test:model-equivalence": "node tests/model-inference-equivalence.mjs",
     "test:worker": "node tests/ai-worker-smoke.mjs",
+    "test:pytorch-features": "node tests/pytorch-feature-smoke.mjs",
     "train:base": "node tools/train-base.mjs"
   },
   "devDependencies": {
     "@tensorflow/tfjs": "4.22.0",
     "fake-indexeddb": "6.2.4",
     "jsdom": "26.1.0"
+  },
+  "dependencies": {
+    "onnxruntime-web": "1.22.0"
   }
 }

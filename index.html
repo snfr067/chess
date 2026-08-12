@@ -8,11 +8,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="台灣暗棋">
   <title>台灣暗棋</title>
-  <meta name="app-version" content="learning-v2-20260805-exact-worker">
+  <meta name="app-version" content="pytorch-onnx-v1-20260812">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./apple-touch-icon.svg">
-  <link rel="stylesheet" href="./style.css?v=learning-v2-20260805-exact-worker">
+  <link rel="stylesheet" href="./style.css?v=pytorch-onnx-v1-20260812">
 </head>
 <body>
   <div class="app-shell">
@@ -116,6 +116,11 @@
               <button id="rollbackLearningBtn" class="ghost-btn compact" type="button">回復上一槽</button>
               <input id="importLearningFile" class="hidden" type="file" accept="application/json,.json">
             </div>
+            <div class="model-actions pytorch-model-actions">
+              <button id="importPytorchModelBtn" class="secondary-btn compact" type="button">選擇 GPU 訓練模型</button>
+              <span id="pytorchModelStatus" class="setting-help">正在尋找 final_model.onnx…</span>
+              <input id="importPytorchModelFile" class="hidden" type="file" accept=".onnx,application/octet-stream">
+            </div>
           </section>
         </div>
       </section>
@@ -205,9 +210,9 @@
     </div>
   </div>
 
-  <script src="./model-core.js?v=learning-v2-20260805-exact-worker"></script>
-  <script src="./learning.js?v=learning-v2-20260805-exact-worker"></script>
-  <script src="./app.js?v=learning-v2-20260805-exact-worker"></script>
-  <div id="versionBadge" class="version-badge">版本：learning-v2-20260805-exact-worker</div>
+  <script src="./model-core.js?v=pytorch-onnx-v1-20260812"></script>
+  <script src="./learning.js?v=pytorch-onnx-v1-20260812"></script>
+  <script src="./app.js?v=pytorch-onnx-v1-20260812"></script>
+  <div id="versionBadge" class="version-badge">版本：pytorch-onnx-v1-20260812</div>
 </body>
 </html>

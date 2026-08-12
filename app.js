@@ -1,4 +1,4 @@
-const APP_VERSION = "learning-v2-20260805-exact-worker";
+const APP_VERSION = "pytorch-onnx-v1-20260812";
 
 const ROWS = 4;
 const COLS = 8;
@@ -80,7 +80,7 @@ function saveAiDelaySeconds(value) { localStorage.setItem("darkChessAiDelaySecon
 function loadAiDelayMs() { return Math.round(loadAiDelaySeconds() * 1000); }
 function formatSeconds(value) { return `${Number.parseFloat(value).toFixed(1)} 秒`; }
 function isComboRuleEnabled() { return state && typeof state.comboRule === "boolean" ? state.comboRule : loadComboRule(); }
-function actorDelay(actor, ratio = 1) { return actor === AI ? Math.max(120, Math.round(loadAiDelayMs() * ratio)) : Math.max(45, Math.round(110 * ratio)); }
+function actorDelay(actor, ratio = 1) { return Math.max(120, Math.round(loadAiDelayMs() * ratio)); }
 function loadCorrectionMode() { const saved = localStorage.getItem("darkChessCorrectionMode"); return saved === null ? true : saved === "true"; }
 function saveCorrectionMode(enabled) { localStorage.setItem("darkChessCorrectionMode", enabled ? "true" : "false"); }
 function isCorrectionInputActive() { return Boolean(state && state.correction && ["change", "takeover"].includes(state.correction.inputMode)); }
@@ -92,7 +92,7 @@ function initDom() {
     "humanColorLabel", "aiColorLabel", "turnOrb", "redGrave", "blackGrave", "capturedCount", "leftGraveTitle", "rightGraveTitle", "leftGraveCount", "rightGraveCount", "toast", "modal", "modalTitle", "modalText", "modalHomeBtn", "modalRestartBtn",
     "correctionModeCheckbox", "correctionPanel", "correctionText", "approveAiStepBtn", "changeAiStepBtn", "takeOverAiTurnBtn",
     "learningModelStatus", "learningUpdatedAt", "learningGameCount", "learningGameBreakdown", "learningDecisionCount", "learningModelSize", "learningDataSize",
-    "learningBaseVersion", "learningPersonalVersion", "learningApprovalCount", "learningCorrectionCount", "learningDemoCount", "learningTop1", "learningTop3", "learningComboTop1", "learningDarkTop1", "learningStopTop1", "learningSequenceExact", "learningRecentTop1", "learningInferenceTime", "learningTrainingInfo", "learningPersistence", "learningParamCount", "exportLearningBtn", "importLearningBtn", "importLearningFile", "rollbackLearningBtn"
+    "learningBaseVersion", "learningPersonalVersion", "learningApprovalCount", "learningCorrectionCount", "learningDemoCount", "learningTop1", "learningTop3", "learningComboTop1", "learningDarkTop1", "learningStopTop1", "learningSequenceExact", "learningRecentTop1", "learningInferenceTime", "learningTrainingInfo", "learningPersistence", "learningParamCount", "exportLearningBtn", "importLearningBtn", "importLearningFile", "rollbackLearningBtn", "pytorchModelStatus", "importPytorchModelBtn", "importPytorchModelFile"
   ]) dom[id] = document.getElementById(id);
 }
 
@@ -118,6 +118,10 @@ function bindEvents() {
   if (dom.difficultySelect) dom.difficultySelect.addEventListener("change", () => { saveDifficulty(dom.difficultySelect.value); syncSettingsUI(); });
   dom.comboRuleCheckbox.addEventListener("change", () => { saveComboRule(dom.comboRuleCheckbox.checked); syncSettingsUI(); });
   dom.correctionModeCheckbox.addEventListener("change", () => { saveCorrectionMode(dom.correctionModeCheckbox.checked); syncSettingsUI(); });
+  if (dom.importPytorchModelBtn && dom.importPytorchModelFile) {
+    dom.importPytorchModelBtn.addEventListener("click", () => dom.importPytorchModelFile.click());
+    dom.importPytorchModelFile.addEventListener("change", importPytorchOnnxModel);
+  }
   dom.aiDelayRange.addEventListener("input", () => { saveAiDelaySeconds(dom.aiDelayRange.value); syncSettingsUI(); });
   dom.approveAiStepBtn.addEventListener("click", () => resolveAiCorrection("approve"));
   dom.changeAiStepBtn.addEventListener("click", () => resolveAiCorrection("change"));
@@ -205,6 +209,8 @@ function newGame(startTurn = true) {
     turnHistory: [],
     positionHistory: [],
     positionCounts: Object.create(null),
+    completedTurns: 0,
+    atomicPly: 0,
     aiSearchInfo: null,
     learningGame: startTurn && window.DarkChessLearning ? window.DarkChessLearning.createSession() : null,
     learningTurnNumber: 0,
@@ -1003,7 +1009,28 @@ function createWorkerStateSnapshot() {
     })),
     positionHistory: [...state.positionHistory],
     positionCounts: { ...state.positionCounts },
+    completedTurns: state.completedTurns,
+    atomicPly: state.atomicPly,
   };
+}
+
+async function importPytorchOnnxModel(event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = "";
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".onnx")) {
+    showToast("請選擇由 final_model.pt 匯出的 .onnx 模型");
+    return;
+  }
+  try {
+    const bytes = await file.arrayBuffer();
+    const result = await requestWorkerMessage({ type: "load-onnx-model", name: file.name, bytes }, [bytes]);
+    if (dom.pytorchModelStatus) dom.pytorchModelStatus.textContent = `已載入 ${file.name}（${formatLearningBytes(file.size)}）`;
+    showToast(result && result.message ? result.message : "GPU 訓練模型已載入");
+  } catch (error) {
+    if (dom.pytorchModelStatus) dom.pytorchModelStatus.textContent = "模型載入失敗";
+    showToast(error instanceof Error ? error.message : String(error));
+  }
 }
 
 function ensureAiWorker() {
@@ -1017,7 +1044,11 @@ function ensureAiWorker() {
         recycleAiWorker();
         return;
       }
-      if (!["result", "prepared", "evaluated", "error"].includes(message.type)) return;
+      if (message.type === "model-status") {
+        if (dom.pytorchModelStatus) dom.pytorchModelStatus.textContent = message.message || "使用內建棋力";
+        return;
+      }
+      if (!["result", "prepared", "evaluated", "model-loaded", "error"].includes(message.type)) return;
       const pending = aiWorkerRequests.get(message.id);
       if (!pending) return;
       aiWorkerRequests.delete(message.id);
@@ -1027,6 +1058,7 @@ function ensureAiWorker() {
       }
       if (message.type === "result") pending.resolve(message.choice);
       else if (message.type === "prepared") pending.resolve(message.prepared);
+      else if (message.type === "model-loaded") pending.resolve(message.result);
       else pending.resolve(message.context);
     });
     aiWorker.addEventListener("error", (error) => {
@@ -1049,14 +1081,14 @@ function recycleAiWorker() {
   aiWorkerRequests.clear();
 }
 
-function requestWorkerMessage(payload) {
+function requestWorkerMessage(payload, transfer = []) {
   const worker = ensureAiWorker();
   if (!worker) return Promise.reject(new Error("此瀏覽器無法建立 AI 背景執行緒"));
   const id = ++aiWorkerRequestId;
   return new Promise((resolve, reject) => {
     aiWorkerRequests.set(id, { resolve, reject });
     try {
-      worker.postMessage({ ...payload, id });
+      worker.postMessage({ ...payload, id }, transfer);
     } catch (error) {
       console.error("Unable to send the AI position to the worker.", error);
       aiWorkerRequests.delete(id);
@@ -1659,6 +1691,7 @@ function captureActionHistoryMeta(board, action) {
 
 function recordTurnAction(actor, action, result, meta) {
   if (!state || !result || result.invalid) return;
+  state.atomicPly = Number(state.atomicPly || 0) + 1;
   if (!Array.isArray(state.turnActions)) state.turnActions = [];
   state.turnActions.push({
     actor,
@@ -1693,6 +1726,7 @@ function finalizeTurnHistory(actor, nextColor) {
       color: state.playerColor[actor],
       actions: actions.map((item) => ({ ...item, action: [...item.action] })),
       movedPieceId,
+      moverKind: lastMove ? lastMove.moverKind : null,
       from: firstMove && firstMove.source ? { ...firstMove.source } : null,
       to: finalPos ? { ...finalPos } : lastMove && lastMove.destination ? { ...lastMove.destination } : null,
       hadCapture: actions.some((item) => item.successCapture),
@@ -1708,6 +1742,7 @@ function finalizeTurnHistory(actor, nextColor) {
   if (state.positionHistory.length > MAX_TURN_HISTORY) state.positionHistory.splice(0, state.positionHistory.length - MAX_TURN_HISTORY);
   state.positionCounts[key] = (state.positionCounts[key] || 0) + 1;
   state.turnActions = [];
+  state.completedTurns = Number(state.completedTurns || 0) + 1;
 }
 
 function findPiecePositionById(board, id) {
@@ -2027,6 +2062,42 @@ if (typeof document !== "undefined") {
       const observation = buildLearningObservation(actor, comboPos);
       const candidates = generateLearningCandidates(actor, comboPos);
       return { observation, candidates, featureElapsedMs: nowMs() - startedAt };
+    },
+    movePolicy(action) {
+      const color = state.playerColor[state.currentPlayer];
+      if (!color || action[0] !== "move") return { forbidden: false, penalty: 0 };
+      return evaluateOpeningPolicy(state.board, action, state.currentPlayer, color, opponentColor(color));
+    },
+    publicActionScore(action) {
+      const color = state.playerColor[state.currentPlayer];
+      if (action[0] === "flip") return 10 - Math.abs(action[1] - 1.5) * 2 - Math.abs(action[2] - 3.5);
+      if (action[0] === "capture") {
+        const target = state.board[action[3]][action[4]];
+        return target ? SEARCH_VALUE[target.kind] : 0;
+      }
+      if (action[0] === "move") {
+        const policy = this.movePolicy(action);
+        return -Number(policy.penalty || 0) / 100;
+      }
+      if (action[0] !== "stop" || !color) return null;
+      const enemy = opponentColor(color);
+      const unseen = getUnseenPool(state.board, state.captured).counts;
+      const visibleMaterial = (side) => state.board.flat().reduce((sum, piece) => (
+        sum + (piece && piece.faceUp && piece.color === side ? SEARCH_VALUE[piece.kind] : 0)
+      ), 0) + Object.entries(unseen[side]).reduce((sum, [kind, count]) => sum + count * SEARCH_VALUE[kind], 0);
+      const threats = (side) => {
+        let total = 0;
+        for (let r = 0; r < ROWS; r += 1) for (let c = 0; c < COLS; c += 1) {
+          const piece = state.board[r][c];
+          if (piece && piece.faceUp && piece.color === side) {
+            total += generateCaptureActionsFrom(state.board, side, { r, c }, { includeDark: false }).length;
+          }
+        }
+        return total;
+      };
+      const combo = state.combo.active ? 90 : 0;
+      const heuristic = Math.tanh((visibleMaterial(color) - visibleMaterial(enemy) + (threats(color) - threats(enemy)) * 28 + combo) / 1500);
+      return heuristic * 180;
     },
   };
 }

@@ -23,6 +23,25 @@ const context = vm.createContext({
   setTimeout,
   clearTimeout,
   tf: testTf,
+  ort: {
+    env: { wasm: {} },
+    Tensor: class Tensor {
+      constructor(type, data, dims) { this.type = type; this.data = data; this.dims = dims; }
+    },
+    InferenceSession: {
+      create: async () => ({
+        inputNames: ["board", "global_features", "history", "actions"],
+        run: async (feeds) => {
+          const count = feeds.actions.dims[1];
+          return {
+            policy_logits: { data: Float32Array.from({ length: count }, (_, index) => index) },
+            candidate_values: { data: new Float32Array(count) },
+            state_value: { data: new Float32Array(1) },
+          };
+        },
+      }),
+    },
+  },
 });
 context.self = context;
 context.postMessage = (message) => emitted.push(message);
@@ -32,7 +51,7 @@ context.addEventListener = (type, handler) => {
 context.importScripts = (...urls) => {
   for (const sourceUrl of urls) {
     const relative = String(sourceUrl).replace(/^\.\//, "").split("?")[0];
-    if (relative === "vendor/tf.min.js") continue;
+    if (["vendor/tf.min.js", "vendor/ort.min.js"].includes(relative)) continue;
     const source = fs.readFileSync(new URL(`../${relative}`, import.meta.url), "utf8");
     vm.runInContext(source, context, { filename: relative });
   }
@@ -110,6 +129,25 @@ const tacticalResponse = emitted.find((row) => row.id === 2);
 if (!tacticalResponse || tacticalResponse.type !== "result") throw new Error(`AI 戰術推論失敗：${JSON.stringify(tacticalResponse)}`);
 const tacticalWallMs = performance.now() - tacticalStartedAt;
 if (tacticalWallMs > 1500) throw new Error(`完整戰術推論超過 1.5 秒：${Math.round(tacticalWallMs)}ms`);
+
+await messageHandler({ data: {
+  type: "load-onnx-model",
+  id: 3,
+  name: "final_model.onnx",
+  bytes: new ArrayBuffer(8),
+} });
+const loadResponse = emitted.find((row) => row.id === 3);
+if (!loadResponse || loadResponse.type !== "model-loaded") throw new Error("ONNX 模型載入訊息失敗");
+await messageHandler({ data: {
+  type: "think",
+  id: 4,
+  snapshot,
+  comboPos: null,
+  learningSnapshot: null,
+} });
+const onnxResponse = emitted.find((row) => row.id === 4);
+if (!onnxResponse || onnxResponse.choice.context.source !== "pytorch-onnx") throw new Error("AI 未切換至 ONNX 模型");
+if (onnxResponse.choice.candidateIndex !== 31) throw new Error("AI 未依 ONNX policy logits 選擇行動");
 console.log(JSON.stringify({
   candidates: choice.context.candidates.length,
   featureMs: choice.featureElapsedMs,
@@ -119,4 +157,5 @@ console.log(JSON.stringify({
   tacticalFeatureMs: tacticalResponse.choice.featureElapsedMs,
   tacticalInferenceMs: tacticalResponse.choice.elapsedMs,
   tacticalWallMs,
+  onnxSource: onnxResponse.choice.context.source,
 }));

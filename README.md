@@ -49,6 +49,43 @@ python -m http.server 4173
 
 基礎模型檔案為 `base-model.json` 與 `base-model.weights.bin`；建置工具為 `tools/train-base.mjs`。玩家裝置只更新個人適配器。
 
+## 使用 GPU 訓練器的 final_model.pt
+
+瀏覽器無法直接執行 PyTorch 的 `.pt` checkpoint。本專案會讀取同一目錄下的
+`final_model.onnx`；若網站沒有放置該檔，設定頁可從手機或電腦本機選擇 `.onnx`。
+
+倉庫與 `dark-chess-b200-gpu-trainer` 同放在 `D:\GitCode` 時，可雙擊：
+
+```text
+export_final_model_windows.bat
+```
+
+它會讀取：
+
+```text
+D:\GitCode\dark-chess-b200-gpu-trainer\training-gpu\final_model.pt
+```
+
+並在本專案根目錄產生：
+
+```text
+final_model.onnx
+```
+
+模型小於 GitHub 的單檔限制時，可將 `final_model.onnx` 一起提交；GitHub Pages
+開啟遊戲後會自動載入。若不把模型提交至 GitHub，請在遊戲設定頁按「選擇 GPU
+訓練模型」，從手機的檔案選擇器載入 `final_model.onnx`。選取的模型只在本機
+瀏覽器背景執行緒內使用。
+
+手動匯出指令：
+
+```powershell
+D:\GitCode\dark-chess-b200-gpu-trainer\.venv\Scripts\python.exe `
+  tools\export_final_model.py `
+  D:\GitCode\dark-chess-b200-gpu-trainer\training-gpu\final_model.pt `
+  final_model.onnx
+```
+
 ## 每局更新
 
 每局結束時，程式先使用更新前模型計算 Top-1／Top-3，再用本局、全部糾正資料與最多 8,192 筆分層回放訓練 3 個 epoch。優化器為 Adam，學習率 `0.0005`，批次 32。模型先寫入非現用槽，交易成功後才切換指標。

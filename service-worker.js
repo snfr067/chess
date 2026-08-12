@@ -1,15 +1,19 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-learning-v2-20260805-exact-worker";
+const CACHE_NAME = "taiwan-dark-chess-pwa-pytorch-onnx-v1-20260812";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=learning-v2-20260805-exact-worker",
+  "./style.css?v=pytorch-onnx-v1-20260812",
   "./vendor/tf.min.js?v=4.22.0",
-  "./model-core.js?v=learning-v2-20260805-exact-worker",
+  "./vendor/ort.min.js?v=1.22.0",
+  "./vendor/ort-wasm-simd-threaded.mjs",
+  "./vendor/ort-wasm-simd-threaded.wasm",
+  "./model-core.js?v=pytorch-onnx-v1-20260812",
+  "./pytorch-model-core.js?v=pytorch-onnx-v1-20260812",
   "./base-model.json",
   "./base-model.weights.bin",
-  "./learning.js?v=learning-v2-20260805-exact-worker",
-  "./app.js?v=learning-v2-20260805-exact-worker",
-  "./ai-worker.js?v=learning-v2-20260805-exact-worker",
+  "./learning.js?v=pytorch-onnx-v1-20260812",
+  "./app.js?v=pytorch-onnx-v1-20260812",
+  "./ai-worker.js?v=pytorch-onnx-v1-20260812",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg"
