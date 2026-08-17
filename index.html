@@ -8,11 +8,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="台灣暗棋">
   <title>台灣暗棋</title>
-  <meta name="app-version" content="pytorch-onnx-v2-20260812">
+  <meta name="app-version" content="pytorch-onnx-v5-20260817">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./apple-touch-icon.svg">
-  <link rel="stylesheet" href="./style.css?v=pytorch-onnx-v2-20260812">
+  <link rel="stylesheet" href="./style.css?v=pytorch-onnx-v5-20260817">
 </head>
 <body>
   <div class="app-shell">
@@ -73,11 +73,11 @@
 
           <div class="delay-setting-block">
             <div class="delay-label-row">
-              <label class="setting-label" for="aiDelayRange">AI 每步延遲</label>
-              <span id="aiDelayValue" class="delay-value">0.5 秒</span>
+              <label class="setting-label" for="aiDelayRange">每個棋盤動作</label>
+              <span id="aiDelayValue" class="delay-value">0.7 秒</span>
             </div>
-            <input id="aiDelayRange" class="range-input" type="range" min="0.2" max="0.7" step="0.1" value="0.5">
-            <p class="setting-help">模型判斷與畫面節奏共用單步時間；常態控制在 1.5 秒內，強制上限為 1.9 秒。</p>
+            <input id="aiDelayRange" class="range-input" type="range" min="0.5" max="0.9" step="0.1" value="0.7">
+            <p class="setting-help">翻棋、移動、食用與失敗退回的每個可見步驟都使用相同時間；預設 0.7 秒。AI 思考時間另行計算。</p>
           </div>
 
           <section class="model-info-block" aria-labelledby="learningModelTitle">
@@ -210,9 +210,9 @@
     </div>
   </div>
 
-  <script src="./model-core.js?v=pytorch-onnx-v2-20260812"></script>
-  <script src="./learning.js?v=pytorch-onnx-v2-20260812"></script>
-  <script src="./app.js?v=pytorch-onnx-v2-20260812"></script>
-  <div id="versionBadge" class="version-badge">版本：pytorch-onnx-v2-20260812</div>
+  <script src="./model-core.js?v=pytorch-onnx-v5-20260817"></script>
+  <script src="./learning.js?v=pytorch-onnx-v5-20260817"></script>
+  <script src="./app.js?v=pytorch-onnx-v5-20260817"></script>
+  <div id="versionBadge" class="version-badge">版本：pytorch-onnx-v5-20260817</div>
 </body>
 </html>

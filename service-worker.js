@@ -1,19 +1,19 @@
-const CACHE_NAME = "taiwan-dark-chess-pwa-pytorch-onnx-v2-20260812";
+const CACHE_NAME = "taiwan-dark-chess-pwa-pytorch-onnx-v5-20260817";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=pytorch-onnx-v2-20260812",
+  "./style.css?v=pytorch-onnx-v5-20260817",
   "./vendor/tf.min.js?v=4.22.0",
   "./vendor/ort.min.js?v=1.22.0",
   "./vendor/ort-wasm-simd-threaded.mjs",
   "./vendor/ort-wasm-simd-threaded.wasm",
-  "./model-core.js?v=pytorch-onnx-v2-20260812",
-  "./pytorch-model-core.js?v=pytorch-onnx-v2-20260812",
+  "./model-core.js?v=pytorch-onnx-v5-20260817",
+  "./pytorch-model-core.js?v=pytorch-onnx-v5-20260817",
   "./base-model.json",
   "./base-model.weights.bin",
-  "./learning.js?v=pytorch-onnx-v2-20260812",
-  "./app.js?v=pytorch-onnx-v2-20260812",
-  "./ai-worker.js?v=pytorch-onnx-v2-20260812",
+  "./learning.js?v=pytorch-onnx-v5-20260817",
+  "./app.js?v=pytorch-onnx-v5-20260817",
+  "./ai-worker.js?v=pytorch-onnx-v5-20260817",
   "./manifest.webmanifest",
   "./icon.svg",
   "./apple-touch-icon.svg"

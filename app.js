@@ -1,4 +1,4 @@
-const APP_VERSION = "pytorch-onnx-v2-20260812";
+const APP_VERSION = "pytorch-onnx-v5-20260817";
 
 const ROWS = 4;
 const COLS = 8;
@@ -51,8 +51,10 @@ const SEARCH_FORBIDDEN = 50_000_000;
 const MAX_COMBO_STEPS = 15;
 const MAX_TURN_HISTORY = 96;
 const REPETITION_LIMIT = 3;
-const AI_STEP_HARD_LIMIT_MS = 1900;
-const AI_STEP_GUARD_MS = 70;
+const ACTION_DURATION_MIN_SECONDS = 0.5;
+const ACTION_DURATION_MAX_SECONDS = 0.9;
+const ACTION_DURATION_DEFAULT_SECONDS = 0.7;
+const ACTION_DURATION_STORAGE_KEY = "darkChessActionDurationSecondsV5";
 
 let state = null;
 let aiRunId = 0;
@@ -75,12 +77,25 @@ function loadDifficulty() { const saved = localStorage.getItem("darkChessDifficu
 function saveDifficulty(value) { if (DIFFICULTIES[value]) localStorage.setItem("darkChessDifficulty", value); }
 function loadComboRule() { const saved = localStorage.getItem("darkChessComboRule"); return saved === null ? true : saved === "true"; }
 function saveComboRule(enabled) { localStorage.setItem("darkChessComboRule", enabled ? "true" : "false"); }
-function loadAiDelaySeconds() { const saved = Number.parseFloat(localStorage.getItem("darkChessAiDelaySeconds")); return Number.isFinite(saved) ? clamp(saved, 0.2, 0.7) : 0.5; }
-function saveAiDelaySeconds(value) { localStorage.setItem("darkChessAiDelaySeconds", clamp(Number.parseFloat(value), 0.2, 0.7).toFixed(1)); }
-function loadAiDelayMs() { return Math.round(loadAiDelaySeconds() * 1000); }
+function loadActionDurationSeconds() {
+  const saved = Number.parseFloat(localStorage.getItem(ACTION_DURATION_STORAGE_KEY));
+  return Number.isFinite(saved)
+    ? clamp(saved, ACTION_DURATION_MIN_SECONDS, ACTION_DURATION_MAX_SECONDS)
+    : ACTION_DURATION_DEFAULT_SECONDS;
+}
+function saveActionDurationSeconds(value) {
+  localStorage.setItem(
+    ACTION_DURATION_STORAGE_KEY,
+    clamp(Number.parseFloat(value), ACTION_DURATION_MIN_SECONDS, ACTION_DURATION_MAX_SECONDS).toFixed(1)
+  );
+}
+function loadActionDurationMs() { return Math.round(loadActionDurationSeconds() * 1000); }
 function formatSeconds(value) { return `${Number.parseFloat(value).toFixed(1)} 秒`; }
 function isComboRuleEnabled() { return state && typeof state.comboRule === "boolean" ? state.comboRule : loadComboRule(); }
-function actorDelay(actor, ratio = 1) { return Math.max(120, Math.round(loadAiDelayMs() * ratio)); }
+function actionMotionDuration() { return loadActionDurationMs(); }
+function syncActionDurationCss() {
+  document.documentElement.style.setProperty("--game-action-duration", `${loadActionDurationMs()}ms`);
+}
 function loadCorrectionMode() { const saved = localStorage.getItem("darkChessCorrectionMode"); return saved === null ? true : saved === "true"; }
 function saveCorrectionMode(enabled) { localStorage.setItem("darkChessCorrectionMode", enabled ? "true" : "false"); }
 function isCorrectionInputActive() { return Boolean(state && state.correction && ["change", "takeover"].includes(state.correction.inputMode)); }
@@ -122,7 +137,7 @@ function bindEvents() {
     dom.importPytorchModelBtn.addEventListener("click", () => dom.importPytorchModelFile.click());
     dom.importPytorchModelFile.addEventListener("change", importPytorchOnnxModel);
   }
-  dom.aiDelayRange.addEventListener("input", () => { saveAiDelaySeconds(dom.aiDelayRange.value); syncSettingsUI(); });
+  dom.aiDelayRange.addEventListener("input", () => { saveActionDurationSeconds(dom.aiDelayRange.value); syncSettingsUI(); });
   dom.approveAiStepBtn.addEventListener("click", () => resolveAiCorrection("approve"));
   dom.changeAiStepBtn.addEventListener("click", () => resolveAiCorrection("change"));
   dom.takeOverAiTurnBtn.addEventListener("click", () => resolveAiCorrection("takeover"));
@@ -147,9 +162,10 @@ function syncSettingsUI() {
   if (dom.difficultyHelp) dom.difficultyHelp.textContent = DIFFICULTIES[difficulty].help;
   dom.comboRuleCheckbox.checked = loadComboRule();
   dom.correctionModeCheckbox.checked = loadCorrectionMode();
-  const aiDelay = loadAiDelaySeconds();
-  dom.aiDelayRange.value = aiDelay.toFixed(1);
-  dom.aiDelayValue.textContent = formatSeconds(aiDelay);
+  const actionDuration = loadActionDurationSeconds();
+  dom.aiDelayRange.value = actionDuration.toFixed(1);
+  dom.aiDelayValue.textContent = formatSeconds(actionDuration);
+  syncActionDurationCss();
 }
 
 function createBoardButtons() {
@@ -759,7 +775,10 @@ function render() {
       const btn = getButton(r, c);
       const cell = btn.parentElement;
       const isLastMove = state.lastMove && state.lastMove.r === r && state.lastMove.c === c;
+      const oldCapturedGhost = cell.querySelector(".capture-target-ghost");
+      if (oldCapturedGhost) oldCapturedGhost.remove();
       cell.className = "cell";
+      cell.style.removeProperty("--motion-duration");
       if (isLastMove) cell.classList.add("last-move-cell");
       if (samePos(pendingSource, { r, c })) cell.classList.add("preview-source");
       if (samePos(pendingDest, { r, c })) cell.classList.add("preview-target");
@@ -772,6 +791,13 @@ function render() {
 
       btn.disabled = state.locked || (state.aiThinking && !correctionInput) || (state.currentPlayer === AI && !correctionInput);
       btn.className = "piece-btn";
+      btn.style.removeProperty("--move-from-x");
+      btn.style.removeProperty("--move-from-y");
+      btn.style.removeProperty("--lunge-x");
+      btn.style.removeProperty("--lunge-y");
+      btn.style.removeProperty("--lunge-return-x");
+      btn.style.removeProperty("--lunge-return-y");
+      btn.style.removeProperty("--motion-duration");
       btn.textContent = "";
       if (!piece) {
         btn.classList.add("empty");
@@ -785,6 +811,7 @@ function render() {
       if (selected && selected.r === r && selected.c === c) btn.classList.add("selected");
       if (legalTargets.has(`${r},${c}`)) btn.classList.add("hint-target");
       if (samePos(animDest, { r, c }) && animAction) {
+        btn.style.setProperty("--motion-duration", `${state.animation.motionDurationMs}ms`);
         if (animAction[0] === "flip" || (animAction[0] === "darkCapture" && animResult && animResult.phase === "reveal")) btn.classList.add("flip-anim");
         else if (animAction[0] === "move") btn.classList.add("move-anim");
         else if (animAction[0] === "capture" || (animAction[0] === "darkCapture" && animResult && animResult.successCapture)) btn.classList.add("capture-anim");
@@ -793,11 +820,76 @@ function render() {
     }
   }
 
+  applyBoardMotionStyles(animAction, animResult);
+
   dom.humanColorLabel.textContent = colorLabel(state.playerColor[HUMAN]);
   dom.aiColorLabel.textContent = colorLabel(state.playerColor[AI]);
   dom.turnOrb.textContent = state.turnColor === null ? "先翻" : correctionInput ? "示範" : state.combo.active && state.currentPlayer === HUMAN ? "連吃" : state.currentPlayer === HUMAN ? "您" : "AI";
   dom.endTurnBtn.classList.toggle("hidden", !(state.combo.active && !state.locked && (correctionInput || (state.currentPlayer === HUMAN && !state.aiThinking))));
   renderGraveyard();
+}
+
+function setMotionVector(element, sourceButton, destinationButton, durationMs) {
+  if (!element || !sourceButton || !destinationButton) return;
+  const sourceRect = sourceButton.getBoundingClientRect();
+  const destinationRect = destinationButton.getBoundingClientRect();
+  const fromX = sourceRect.left - destinationRect.left;
+  const fromY = sourceRect.top - destinationRect.top;
+  const toX = -fromX;
+  const toY = -fromY;
+  element.style.setProperty("--move-from-x", `${fromX}px`);
+  element.style.setProperty("--move-from-y", `${fromY}px`);
+  element.style.setProperty("--lunge-x", `${toX * 0.42}px`);
+  element.style.setProperty("--lunge-y", `${toY * 0.42}px`);
+  element.style.setProperty("--lunge-return-x", `${toX * 0.30}px`);
+  element.style.setProperty("--lunge-return-y", `${toY * 0.30}px`);
+  element.style.setProperty("--motion-duration", `${durationMs}ms`);
+}
+
+function appendCapturedTargetGhost(destinationCell, captured, durationMs) {
+  if (!destinationCell || !captured) return;
+  const ghost = document.createElement("span");
+  ghost.className = `piece-btn capture-target-ghost ${captured.color === "red" ? "red-piece" : "black-piece"}`;
+  ghost.textContent = pieceName(captured);
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.style.setProperty("--motion-duration", `${durationMs}ms`);
+  destinationCell.appendChild(ghost);
+}
+
+function applyBoardMotionStyles(action, result) {
+  if (!state || !state.animation || !action) return;
+  const source = actionSource(action);
+  const destination = actionDestination(action);
+  if (!source || !destination) return;
+
+  const sourceButton = getButton(source.r, source.c);
+  const destinationButton = getButton(destination.r, destination.c);
+  if (!sourceButton || !destinationButton) return;
+  const durationMs = state.animation.motionDurationMs;
+  const successfulTravel = action[0] === "move"
+    || action[0] === "capture"
+    || (action[0] === "darkCapture" && result && result.successCapture);
+
+  if (successfulTravel) {
+    const sourceCell = sourceButton.parentElement;
+    const destinationCell = destinationButton.parentElement;
+    destinationCell.classList.add("anim-motion-cell");
+    sourceCell.style.setProperty("--motion-duration", `${durationMs}ms`);
+    destinationCell.style.setProperty("--motion-duration", `${durationMs}ms`);
+    setMotionVector(destinationButton, sourceButton, destinationButton, durationMs);
+    if (result && result.captured) appendCapturedTargetGhost(destinationCell, result.captured, durationMs);
+    return;
+  }
+
+  if (action[0] === "darkCapture" && result && result.phase !== "reveal" && !result.successCapture) {
+    const sourceCell = sourceButton.parentElement;
+    const destinationCell = destinationButton.parentElement;
+    sourceCell.classList.add("anim-motion-cell");
+    sourceCell.style.setProperty("--motion-duration", `${durationMs}ms`);
+    destinationCell.style.setProperty("--motion-duration", `${durationMs}ms`);
+    setMotionVector(sourceButton, sourceButton, destinationButton, durationMs);
+    sourceButton.classList.add("fail-attacker-anim");
+  }
 }
 
 function renderActionVisual() {
@@ -1319,7 +1411,6 @@ async function recoverAiMoveFailure(error) {
       if (!choice || !choice.action || !isAiRunActive(recoveryRunId)) return;
       const result = await performVisibleAction(choice.action, AI, {
         runId: recoveryRunId,
-        stepStartedAt: nowMs() - (choice.totalElapsedMs || 0),
       });
       const winner = checkWinner(state.board);
       if (winner !== null) {
@@ -1411,7 +1502,6 @@ async function aiMove() {
         result = await performVisibleAction(action, AI, {
           runId,
           combo: Boolean(comboPos),
-          stepStartedAt: nowMs() - (choice.totalElapsedMs || 0),
         });
       }
     }
@@ -1457,7 +1547,6 @@ function isAiRunActive(runId) { return Boolean(state && state.aiThinking && stat
 
 async function performVisibleAction(action, actor, options = {}) {
   if (!state || !action) return { invalid: true, successCapture: false, captured: null, lastMove: null, type: "invalid" };
-  const stepStartedAt = Number.isFinite(options.stepStartedAt) ? options.stepStartedAt : nowMs();
   if (actor === HUMAN) recordHumanLearningDecision(action);
   const historyMeta = captureActionHistoryMeta(state.board, action);
   state.locked = true;
@@ -1468,11 +1557,12 @@ async function performVisibleAction(action, actor, options = {}) {
   if (actor === AI && options.runId && !isAiRunActive(options.runId)) return { invalid: true, successCapture: false, captured: null, lastMove: null, type: "cancelled" };
 
   if (action[0] === "darkCapture") {
-    const result = await performVisibleDarkCapture(action, actor, { ...options, stepStartedAt });
+    const result = await performVisibleDarkCapture(action, actor, options);
     recordTurnAction(actor, action, result, historyMeta);
     state.pendingAction = null;
     state.locked = false;
     render();
+    state.lastCapturedId = null;
     return result;
   }
 
@@ -1496,7 +1586,8 @@ async function performVisibleAction(action, actor, options = {}) {
   state.lastMove = result.lastMove ? { kind: action[0], ...result.lastMove } : actionDestination(action);
   recordTurnAction(actor, action, result, historyMeta);
   state.actionViz = buildActionViz(actor, action, result, "done");
-  await playAnimation(action, result, capAiStepDelay(actor, actorDelay(actor, 0.72), stepStartedAt));
+  await playAnimation(action, result);
+  state.lastCapturedId = null;
   state.pendingAction = null;
   state.locked = false;
   render();
@@ -1504,14 +1595,13 @@ async function performVisibleAction(action, actor, options = {}) {
 }
 
 async function performVisibleDarkCapture(action, actor, options = {}) {
-  const stepStartedAt = Number.isFinite(options.stepStartedAt) ? options.stepStartedAt : nowMs();
   const [, sr, sc, dr, dc] = action;
   const src = { r: sr, c: sc };
   const dst = { r: dr, c: dc };
   if (!canAttemptHiddenCapturePath(state.board, src, dst)) {
     const invalid = { type: "darkCapture", successCapture: false, captured: null, lastMove: null, invalid: true };
     state.actionViz = buildActionViz(actor, action, invalid, "fail");
-    await playAnimation(action, invalid, capAiStepDelay(actor, actorDelay(actor, 0.5), stepStartedAt));
+    await playAnimation(action, invalid);
     return invalid;
   }
 
@@ -1521,7 +1611,7 @@ async function performVisibleDarkCapture(action, actor, options = {}) {
   const revealResult = { type: "darkCapture", phase: "reveal", successCapture: false, captured: null, revealed, lastMove: { r: dr, c: dc }, invalid: false };
   state.lastMove = { kind: "darkReveal", r: dr, c: dc };
   state.actionViz = buildActionViz(actor, action, revealResult, "reveal");
-  await playAnimation(["flip", dr, dc], revealResult, capAiStepDelay(actor, actorDelay(actor, actor === AI ? 0.95 : 1.05), stepStartedAt));
+  await playAnimation(["flip", dr, dc], revealResult);
   if (actor === AI && options.runId && !isAiRunActive(options.runId)) return revealResult;
 
   if (canCapture(state.board, src, dst)) {
@@ -1535,31 +1625,35 @@ async function performVisibleDarkCapture(action, actor, options = {}) {
     const result = { type: "darkCapture", successCapture: true, captured, revealed, lastMove: { r: dr, c: dc }, invalid: false };
     state.lastMove = { kind: "darkCapture", r: dr, c: dc };
     state.actionViz = buildActionViz(actor, action, result, "done");
-    await playAnimation(action, result, capAiStepDelay(actor, actorDelay(actor, 0.72), stepStartedAt));
+    await playAnimation(action, result);
+    state.lastCapturedId = null;
     return result;
   }
 
   const fail = { type: "darkCapture", successCapture: false, captured: null, revealed, lastMove: { r: dr, c: dc }, invalid: false };
   state.lastMove = { kind: "darkCaptureFail", r: dr, c: dc };
   state.actionViz = buildActionViz(actor, action, fail, "fail");
-  await playAnimation(action, fail, capAiStepDelay(actor, actorDelay(actor, 0.8), stepStartedAt));
+  await playAnimation(action, fail);
   return fail;
 }
 
-function capAiStepDelay(actor, desiredMs, stepStartedAt) {
-  if (actor !== AI) return Math.max(0, desiredMs);
-  const remaining = AI_STEP_HARD_LIMIT_MS - AI_STEP_GUARD_MS - (nowMs() - stepStartedAt);
-  return Math.max(0, Math.min(desiredMs, remaining));
-}
-
-async function playAnimation(action, result, duration) {
+async function playAnimation(action, result) {
+  const duration = actionMotionDuration();
   const id = `${Date.now()}-${Math.random()}`;
-  state.animation = { id, action: [...action], result: result ? { ...result, revealed: result.revealed ? { ...result.revealed } : null, captured: result.captured ? { ...result.captured } : null } : null };
+  state.animation = {
+    id,
+    action: [...action],
+    motionDurationMs: duration,
+    result: result ? {
+      ...result,
+      revealed: result.revealed ? { ...result.revealed } : null,
+      captured: result.captured ? { ...result.captured } : null,
+    } : null,
+  };
   render();
   await sleep(duration);
   if (state && state.animation && state.animation.id === id) state.animation = null;
   if (state && state.actionViz) state.actionViz.pulse = false;
-  render();
 }
 
 function buildActionViz(actor, action, result = null, phase = "preview") {

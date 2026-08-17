@@ -5,9 +5,9 @@ globalThis.window = globalThis;
 importScripts(
   "./vendor/ort.min.js?v=1.22.0",
   "./vendor/tf.min.js?v=4.22.0",
-  "./model-core.js?v=pytorch-onnx-v2-20260812",
-  "./pytorch-model-core.js?v=pytorch-onnx-v2-20260812",
-  "./app.js?v=pytorch-onnx-v2-20260812"
+  "./model-core.js?v=pytorch-onnx-v5-20260817",
+  "./pytorch-model-core.js?v=pytorch-onnx-v5-20260817",
+  "./app.js?v=pytorch-onnx-v5-20260817"
 );
 
 const WORKER_EMBEDDING_DIM = 64;
@@ -17,7 +17,7 @@ let workerEnginePromise = null;
 let pytorchSession = null;
 let pytorchModelName = null;
 
-const PYTORCH_MODEL_VERSION = "pytorch-onnx-v2-20260812";
+const PYTORCH_MODEL_VERSION = "pytorch-onnx-v5-20260817";
 
 function modelLoadErrorText(error) {
   if (error instanceof Error && error.message) return error.message;
